@@ -8,9 +8,22 @@
 
 Hello, I made this project for fun.
 
+----
+
+[Using Docker](#Using-Docker)<br>
+[Prod Packages](#Using-Production-packages-(Windows))
+
+----
+
+## Using-Docker
+
+*Please keep in mind you should run docker with nessesary perms, have access to the internet and actually have docker installed. 
+Install-Debian-Linux(GIVE ME SUDO).sh is a good start point*
+
 Just use docker please the src is fine to use as well but you need golang, bun, garble and openssl.
 
 To use docker copy the docker-compose.yml to your working directory and run
+
 
 ```sh
 docker compose up
@@ -57,7 +70,7 @@ These can be changed with:
 
 It's literally just docker any question chatgpt can answer so don't worry.
 
-## Production package (Windows)
+## Using-Production-packages-(Windows)
 
 Build a production-ready package where the server can still build client binaries at runtime:
 
