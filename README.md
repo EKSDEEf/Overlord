@@ -35,6 +35,26 @@ to update run
 docker compose pull
 ```
 
+## Docker TLS with certbot
+
+If you want to avoid self-signed certificates in Docker/production, enable certbot TLS settings:
+
+- Set `OVERLORD_TLS_CERTBOT_ENABLED=true`
+- Set `OVERLORD_TLS_CERTBOT_DOMAIN=your-domain.com`
+- Mount letsencrypt into the container (for example `- /etc/letsencrypt:/etc/letsencrypt:ro`)
+
+By default Overlord reads:
+
+- cert: `/etc/letsencrypt/live/<domain>/fullchain.pem`
+- key: `/etc/letsencrypt/live/<domain>/privkey.pem`
+- ca: `/etc/letsencrypt/live/<domain>/chain.pem`
+
+These can be changed with:
+`OVERLORD_TLS_CERTBOT_LIVE_PATH`,
+`OVERLORD_TLS_CERTBOT_CERT_FILE`,
+`OVERLORD_TLS_CERTBOT_KEY_FILE`, and
+`OVERLORD_TLS_CERTBOT_CA_FILE`.
+
 It's literally just docker any question chatgpt can answer so don't worry.
 
 ## Production package (Windows)

@@ -1,7 +1,7 @@
 import { authenticateRequest } from "../../auth";
 import * as clientManager from "../../clientManager";
 import { AuditAction, getAuditLogs, logAudit } from "../../auditLog";
-import { getConfig, updateSecurityConfig } from "../../config";
+import { getConfig, updateSecurityConfig, updateTlsConfig } from "../../config";
 import { listClients } from "../../db";
 import { logger } from "../../logger";
 import { metrics } from "../../metrics";
@@ -139,6 +139,58 @@ export async function handleMiscRoutes(
       });
 
       return Response.json({ ok: true, security: updated }, { headers: deps.CORS_HEADERS });
+    }
+  }
+
+  if (url.pathname === "/api/settings/tls") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (user.role !== "admin") {
+      return new Response("Forbidden: Admin access required", { status: 403 });
+    }
+
+    if (req.method === "GET") {
+      return Response.json({ tls: getConfig().tls }, { headers: deps.CORS_HEADERS });
+    }
+
+    if (req.method === "PUT") {
+      let body: any = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON" }, { status: 400 });
+      }
+
+      const updated = await updateTlsConfig({
+        certPath: typeof body?.certPath === "string" ? body.certPath : undefined,
+        keyPath: typeof body?.keyPath === "string" ? body.keyPath : undefined,
+        caPath: typeof body?.caPath === "string" ? body.caPath : undefined,
+        certbot: {
+          enabled: Boolean(body?.certbot?.enabled),
+          livePath: typeof body?.certbot?.livePath === "string" ? body.certbot.livePath : undefined,
+          domain: typeof body?.certbot?.domain === "string" ? body.certbot.domain : undefined,
+          certFileName:
+            typeof body?.certbot?.certFileName === "string" ? body.certbot.certFileName : undefined,
+          keyFileName:
+            typeof body?.certbot?.keyFileName === "string" ? body.certbot.keyFileName : undefined,
+          caFileName:
+            typeof body?.certbot?.caFileName === "string" ? body.certbot.caFileName : undefined,
+        },
+      });
+
+      logAudit({
+        timestamp: Date.now(),
+        username: user.username,
+        ip: deps.requestIP?.(req)?.address || "unknown",
+        action: AuditAction.COMMAND,
+        details: "Updated TLS settings",
+        success: true,
+      });
+
+      return Response.json({ ok: true, tls: updated }, { headers: deps.CORS_HEADERS });
     }
   }
 

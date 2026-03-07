@@ -1,16 +1,77 @@
 import { certificatesExist, generateSelfSignedCert, getLocalIPs, isOpenSSLAvailable } from "../certGenerator";
 import { logger } from "../logger";
+import path from "path";
 
 type TlsBootstrapParams = {
   certPath: string;
   keyPath: string;
   caPath?: string;
+  certbot?: {
+    enabled: boolean;
+    livePath: string;
+    domain: string;
+    certFileName: string;
+    keyFileName: string;
+    caFileName: string;
+  };
 };
 
-export async function prepareTlsOptions(params: TlsBootstrapParams): Promise<{ cert?: string; key?: string; ca?: string }> {
+type TlsBootstrapResult = {
+  tlsOptions: { cert?: string; key?: string; ca?: string };
+  certPathUsed: string;
+  source: "certbot" | "configured" | "self-signed";
+};
+
+export async function prepareTlsOptions(params: TlsBootstrapParams): Promise<TlsBootstrapResult> {
   logger.info("[TLS] TLS/HTTPS is always enabled for security");
 
+  const isDebugRuntime = String(process.env.NODE_ENV || "development").toLowerCase() !== "production";
+  const certbotEnabled = Boolean(params.certbot?.enabled);
+
+  if (certbotEnabled && !isDebugRuntime) {
+    const certbotDomain = String(params.certbot?.domain || "").trim();
+    if (!certbotDomain) {
+      throw new Error("Certbot TLS is enabled but no domain is configured");
+    }
+
+    const certPath = path.join(params.certbot!.livePath, certbotDomain, params.certbot!.certFileName);
+    const keyPath = path.join(params.certbot!.livePath, certbotDomain, params.certbot!.keyFileName);
+    const caPath = path.join(params.certbot!.livePath, certbotDomain, params.certbot!.caFileName);
+
+    if (!certificatesExist(certPath, keyPath)) {
+      throw new Error(
+        `[TLS] Certbot certificates not found. Expected cert=${certPath} key=${keyPath}. ` +
+          "Verify your letsencrypt volume mount and certbot domain settings.",
+      );
+    }
+
+    logger.info(`[TLS] Using certbot certificates for domain ${certbotDomain}`);
+
+    const tlsOptions: { cert?: string; key?: string; ca?: string } = {
+      cert: await Bun.file(certPath).text(),
+      key: await Bun.file(keyPath).text(),
+    };
+
+    const caFile = Bun.file(caPath);
+    if (await caFile.exists()) {
+      tlsOptions.ca = await caFile.text();
+    }
+
+    return {
+      tlsOptions,
+      certPathUsed: certPath,
+      source: "certbot",
+    };
+  }
+
+  if (certbotEnabled && isDebugRuntime) {
+    logger.info("[TLS] Certbot mode is enabled but ignored in debug runtime (NODE_ENV != production)");
+  }
+
+  let source: "configured" | "self-signed" = "configured";
+
   if (!certificatesExist(params.certPath, params.keyPath)) {
+    source = "self-signed";
     logger.info("[TLS] Certificates not found, generating self-signed certificates...");
 
     if (!(await isOpenSSLAvailable())) {
@@ -58,14 +119,22 @@ export async function prepareTlsOptions(params: TlsBootstrapParams): Promise<{ c
       }
     }
 
-    return tlsOptions;
+    return {
+      tlsOptions,
+      certPathUsed: params.certPath,
+      source,
+    };
   } catch (err) {
     logger.error("[TLS] Failed to load certificates:", err);
     throw err;
   }
 }
 
-export function logServerStartup(server: { hostname?: string; port?: number }, certPath: string): void {
+export function logServerStartup(
+  server: { hostname?: string; port?: number },
+  certPath: string,
+  source: "certbot" | "configured" | "self-signed",
+): void {
   const hostname = server.hostname || "0.0.0.0";
   const port = server.port ?? 0;
   const localIPs = getLocalIPs();
@@ -78,8 +147,16 @@ export function logServerStartup(server: { hostname?: string; port?: number }, c
     logger.info("\nLocal network addresses:");
     localIPs.forEach((ip) => logger.info(`  - https://${ip}:${port}`));
   }
-  logger.info("\nΓÜá∩╕Å  Using self-signed certificate");
-  logger.info(`   Clients must trust: ${certPath}`);
-  logger.info("   Or use: OVERLORD_TLS_INSECURE_SKIP_VERIFY=true (dev only)");
+  if (source === "certbot") {
+    logger.info("\nUsing certbot TLS certificate");
+    logger.info(`  Certificate: ${certPath}`);
+  } else if (source === "configured") {
+    logger.info("\nUsing configured TLS certificate");
+    logger.info(`  Certificate: ${certPath}`);
+  } else {
+    logger.info("\nUsing self-signed TLS certificate");
+    logger.info(`  Clients must trust: ${certPath}`);
+    logger.info("  Or use: OVERLORD_TLS_INSECURE_SKIP_VERIFY=true (dev only)");
+  }
   logger.info("========================================");
 }

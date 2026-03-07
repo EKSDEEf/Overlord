@@ -36,8 +36,19 @@ const securityRequireLowercaseInput = document.getElementById("security-require-
 const securityRequireNumberInput = document.getElementById("security-require-number");
 const securityRequireSymbolInput = document.getElementById("security-require-symbol");
 
+const tlsForm = document.getElementById("tls-form");
+const tlsPermissionNote = document.getElementById("tls-permission-note");
+const tlsSaveBtn = document.getElementById("tls-save-btn");
+const tlsCertbotEnabledInput = document.getElementById("tls-certbot-enabled");
+const tlsCertbotLivePathInput = document.getElementById("tls-certbot-live-path");
+const tlsCertbotDomainInput = document.getElementById("tls-certbot-domain");
+const tlsCertbotCertFileInput = document.getElementById("tls-certbot-cert-file");
+const tlsCertbotKeyFileInput = document.getElementById("tls-certbot-key-file");
+const tlsCertbotCaFileInput = document.getElementById("tls-certbot-ca-file");
+
 let currentUser = null;
 let securityConfig = null;
+let tlsConfig = null;
 
 function showMessage(text, type = "ok") {
   if (!messageEl) return;
@@ -123,6 +134,23 @@ function setSecurityFormDisabled(disabled) {
   }
 }
 
+function setTlsFormDisabled(disabled) {
+  const controls = [
+    tlsCertbotEnabledInput,
+    tlsCertbotLivePathInput,
+    tlsCertbotDomainInput,
+    tlsCertbotCertFileInput,
+    tlsCertbotKeyFileInput,
+    tlsCertbotCaFileInput,
+    tlsSaveBtn,
+  ];
+
+  for (const control of controls) {
+    if (!control) continue;
+    control.disabled = disabled;
+  }
+}
+
 function applySecurityForm() {
   if (!securityConfig) return;
   securitySessionTtlInput.value = String(securityConfig.sessionTtlHours || 168);
@@ -167,6 +195,50 @@ async function loadSecurityPolicy() {
   securityConfig = data.security || null;
   applySecurityForm();
   setSecurityFormDisabled(false);
+}
+
+function applyTlsForm() {
+  const certbot = tlsConfig?.certbot || {};
+  tlsCertbotEnabledInput.checked = Boolean(certbot.enabled);
+  tlsCertbotLivePathInput.value = certbot.livePath || "/etc/letsencrypt/live";
+  tlsCertbotDomainInput.value = certbot.domain || "";
+  tlsCertbotCertFileInput.value = certbot.certFileName || "fullchain.pem";
+  tlsCertbotKeyFileInput.value = certbot.keyFileName || "privkey.pem";
+  tlsCertbotCaFileInput.value = certbot.caFileName || "chain.pem";
+}
+
+async function loadTlsSettings() {
+  if (!currentUser) return;
+
+  if (!isAdmin(currentUser.role)) {
+    tlsPermissionNote.classList.remove("hidden");
+    setTlsFormDisabled(true);
+    tlsConfig = {
+      certbot: {
+        enabled: false,
+        livePath: "/etc/letsencrypt/live",
+        domain: "",
+        certFileName: "fullchain.pem",
+        keyFileName: "privkey.pem",
+        caFileName: "chain.pem",
+      },
+    };
+    applyTlsForm();
+    return;
+  }
+
+  tlsPermissionNote.classList.add("hidden");
+  const res = await fetch("/api/settings/tls", { credentials: "include" });
+  if (!res.ok) {
+    showMessage("Failed to load TLS settings.", "error");
+    setTlsFormDisabled(true);
+    return;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  tlsConfig = data.tls || null;
+  applyTlsForm();
+  setTlsFormDisabled(false);
 }
 
 function loadPrefs() {
@@ -277,6 +349,42 @@ async function saveSecurityPolicy(event) {
   showMessage("Security policy updated.");
 }
 
+async function saveTlsSettings(event) {
+  event.preventDefault();
+  if (!isAdmin(currentUser?.role)) {
+    showMessage("Admin role required.", "error");
+    return;
+  }
+
+  const payload = {
+    certbot: {
+      enabled: tlsCertbotEnabledInput.checked,
+      livePath: String(tlsCertbotLivePathInput.value || "").trim(),
+      domain: String(tlsCertbotDomainInput.value || "").trim(),
+      certFileName: String(tlsCertbotCertFileInput.value || "").trim(),
+      keyFileName: String(tlsCertbotKeyFileInput.value || "").trim(),
+      caFileName: String(tlsCertbotCaFileInput.value || "").trim(),
+    },
+  };
+
+  const res = await fetch("/api/settings/tls", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showMessage(data.error || "Failed to save TLS settings.", "error");
+    return;
+  }
+
+  tlsConfig = data.tls || payload;
+  applyTlsForm();
+  showMessage("TLS settings updated. Restart server to apply.");
+}
+
 async function loadBannedIps() {
   if (!currentUser) return;
 
@@ -368,11 +476,13 @@ async function init() {
     await loadCurrentUser();
     loadPrefs();
     await loadSecurityPolicy();
+    await loadTlsSettings();
     await loadBannedIps();
 
     passwordForm.addEventListener("submit", updatePassword);
     prefsForm.addEventListener("submit", savePrefs);
     securityForm.addEventListener("submit", saveSecurityPolicy);
+    tlsForm.addEventListener("submit", saveTlsSettings);
     refreshBansBtn.addEventListener("click", loadBannedIps);
     bansTableBody.addEventListener("click", handleUnbanClick);
   } catch (error) {

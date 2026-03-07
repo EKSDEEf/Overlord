@@ -18,9 +18,18 @@ services:
       OVERLORD_TLS_CERT: ${OVERLORD_TLS_CERT:-/app/certs/server.crt}
       OVERLORD_TLS_KEY: ${OVERLORD_TLS_KEY:-/app/certs/server.key}
       OVERLORD_TLS_CA: ${OVERLORD_TLS_CA:-}
+      # Optional certbot integration (used only when NODE_ENV=production)
+      OVERLORD_TLS_CERTBOT_ENABLED: ${OVERLORD_TLS_CERTBOT_ENABLED:-false}
+      OVERLORD_TLS_CERTBOT_LIVE_PATH: ${OVERLORD_TLS_CERTBOT_LIVE_PATH:-/etc/letsencrypt/live}
+      OVERLORD_TLS_CERTBOT_DOMAIN: ${OVERLORD_TLS_CERTBOT_DOMAIN:-}
+      OVERLORD_TLS_CERTBOT_CERT_FILE: ${OVERLORD_TLS_CERTBOT_CERT_FILE:-fullchain.pem}
+      OVERLORD_TLS_CERTBOT_KEY_FILE: ${OVERLORD_TLS_CERTBOT_KEY_FILE:-privkey.pem}
+      OVERLORD_TLS_CERTBOT_CA_FILE: ${OVERLORD_TLS_CERTBOT_CA_FILE:-chain.pem}
     volumes:
       - overlord-data:/app/data
       - overlord-certs:/app/certs
+      # Uncomment to mount host certbot certs read-only
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
       # Uncomment to use a static config file instead of env vars
       # - ./Overlord-Server/config.json:/app/config.json:ro
     restart: unless-stopped

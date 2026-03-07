@@ -77,8 +77,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check if version image already exists
+        id: existence
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          version="${{ steps.srcver.outputs.version }}"
+
+          if docker buildx imagetools inspect "${image}:${version}" >/dev/null 2>&1; then
+            echo "Image already exists for version ${version}; skipping publish."
+            echo "should_push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No image found for version ${version}; publishing enabled."
+            echo "should_push=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract metadata
         id: meta
+        if: steps.existence.outputs.should_push == 'true'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -89,6 +106,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push server image
+        if: steps.existence.outputs.should_push == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -99,3 +117,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+
+      - name: Publish skipped
+        if: steps.existence.outputs.should_push != 'true'
+        run: echo "Docker image push skipped because this version already exists in GHCR."

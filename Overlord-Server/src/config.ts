@@ -19,6 +19,14 @@ export interface Config {
     certPath: string;
     keyPath: string;
     caPath: string;
+    certbot: {
+      enabled: boolean;
+      livePath: string;
+      domain: string;
+      certFileName: string;
+      keyFileName: string;
+      caFileName: string;
+    };
   };
   notifications: {
     keywords: string[];
@@ -60,6 +68,14 @@ const DEFAULT_CONFIG: Config = {
     certPath: "./certs/server.crt",
     keyPath: "./certs/server.key",
     caPath: "",
+    certbot: {
+      enabled: false,
+      livePath: "/etc/letsencrypt/live",
+      domain: "",
+      certFileName: "fullchain.pem",
+      keyFileName: "privkey.pem",
+      caFileName: "chain.pem",
+    },
   },
   notifications: {
     keywords: ["bank", "password", "admin"],
@@ -234,6 +250,32 @@ export function loadConfig(): Config {
         process.env.OVERLORD_TLS_CA ||
         fileConfig.tls?.caPath ||
         DEFAULT_CONFIG.tls.caPath,
+      certbot: {
+        enabled:
+          String(process.env.OVERLORD_TLS_CERTBOT_ENABLED || "").toLowerCase() === "true" ||
+          fileConfig.tls?.certbot?.enabled ||
+          DEFAULT_CONFIG.tls.certbot.enabled,
+        livePath:
+          process.env.OVERLORD_TLS_CERTBOT_LIVE_PATH ||
+          fileConfig.tls?.certbot?.livePath ||
+          DEFAULT_CONFIG.tls.certbot.livePath,
+        domain:
+          process.env.OVERLORD_TLS_CERTBOT_DOMAIN ||
+          fileConfig.tls?.certbot?.domain ||
+          DEFAULT_CONFIG.tls.certbot.domain,
+        certFileName:
+          process.env.OVERLORD_TLS_CERTBOT_CERT_FILE ||
+          fileConfig.tls?.certbot?.certFileName ||
+          DEFAULT_CONFIG.tls.certbot.certFileName,
+        keyFileName:
+          process.env.OVERLORD_TLS_CERTBOT_KEY_FILE ||
+          fileConfig.tls?.certbot?.keyFileName ||
+          DEFAULT_CONFIG.tls.certbot.keyFileName,
+        caFileName:
+          process.env.OVERLORD_TLS_CERTBOT_CA_FILE ||
+          fileConfig.tls?.certbot?.caFileName ||
+          DEFAULT_CONFIG.tls.certbot.caFileName,
+      },
     },
     notifications: {
       keywords:
@@ -435,6 +477,65 @@ export async function updateSecurityConfig(
   }
 
   fileConfig.security = next;
+
+  try {
+    await mkdir(resolve(process.cwd()), { recursive: true });
+  } catch {}
+
+  await writeFile(configPath, JSON.stringify(fileConfig, null, 2));
+  return next;
+}
+
+export async function updateTlsConfig(
+  updates: Partial<Config["tls"]>,
+): Promise<Config["tls"]> {
+  const current = getConfig();
+
+  const next = {
+    ...current.tls,
+    ...updates,
+    certbot: {
+      ...current.tls.certbot,
+      ...(updates.certbot || {}),
+    },
+  };
+
+  next.certPath = String(next.certPath || DEFAULT_CONFIG.tls.certPath).trim() || DEFAULT_CONFIG.tls.certPath;
+  next.keyPath = String(next.keyPath || DEFAULT_CONFIG.tls.keyPath).trim() || DEFAULT_CONFIG.tls.keyPath;
+  next.caPath = String(next.caPath || "").trim();
+
+  next.certbot.enabled = Boolean(next.certbot.enabled);
+  next.certbot.livePath =
+    String(next.certbot.livePath || DEFAULT_CONFIG.tls.certbot.livePath).trim() ||
+    DEFAULT_CONFIG.tls.certbot.livePath;
+  next.certbot.domain = String(next.certbot.domain || "").trim();
+  next.certbot.certFileName =
+    String(next.certbot.certFileName || DEFAULT_CONFIG.tls.certbot.certFileName).trim() ||
+    DEFAULT_CONFIG.tls.certbot.certFileName;
+  next.certbot.keyFileName =
+    String(next.certbot.keyFileName || DEFAULT_CONFIG.tls.certbot.keyFileName).trim() ||
+    DEFAULT_CONFIG.tls.certbot.keyFileName;
+  next.certbot.caFileName =
+    String(next.certbot.caFileName || DEFAULT_CONFIG.tls.certbot.caFileName).trim() ||
+    DEFAULT_CONFIG.tls.certbot.caFileName;
+
+  configCache = {
+    ...current,
+    tls: next,
+  };
+
+  const configPath = resolve(process.cwd(), "config.json");
+  let fileConfig: any = {};
+  if (existsSync(configPath)) {
+    try {
+      const content = readFileSync(configPath, "utf-8");
+      fileConfig = JSON.parse(content) || {};
+    } catch {
+      fileConfig = {};
+    }
+  }
+
+  fileConfig.tls = next;
 
   try {
     await mkdir(resolve(process.cwd()), { recursive: true });

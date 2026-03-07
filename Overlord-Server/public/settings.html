@@ -195,6 +195,78 @@
             </button>
           </form>
 
+          <form id="tls-form" class="space-y-3 pt-1 border-t border-slate-800 pt-4">
+            <div>
+              <h3 class="font-medium">TLS Certificates</h3>
+              <p class="text-xs text-slate-400">Admin-only TLS source configuration. Changes apply after server restart.</p>
+            </div>
+
+            <div id="tls-permission-note" class="hidden rounded-lg border border-amber-800 bg-amber-900/20 text-amber-200 px-3 py-2 text-sm">
+              Only admins can update TLS settings.
+            </div>
+
+            <label class="flex items-center gap-2 text-sm">
+              <input id="tls-certbot-enabled" type="checkbox" class="h-4 w-4" />
+              <span>Use certbot certificates in production runtime (NODE_ENV=production)</span>
+            </label>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label class="block sm:col-span-2">
+                <span class="text-sm text-slate-300">Certbot live base path</span>
+                <input
+                  id="tls-certbot-live-path"
+                  type="text"
+                  placeholder="/etc/letsencrypt/live"
+                  class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="block sm:col-span-2">
+                <span class="text-sm text-slate-300">Certbot domain folder</span>
+                <input
+                  id="tls-certbot-domain"
+                  type="text"
+                  placeholder="example.com"
+                  class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="block">
+                <span class="text-sm text-slate-300">Cert file name</span>
+                <input
+                  id="tls-certbot-cert-file"
+                  type="text"
+                  placeholder="fullchain.pem"
+                  class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="block">
+                <span class="text-sm text-slate-300">Key file name</span>
+                <input
+                  id="tls-certbot-key-file"
+                  type="text"
+                  placeholder="privkey.pem"
+                  class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="block sm:col-span-2">
+                <span class="text-sm text-slate-300">CA chain file name</span>
+                <input
+                  id="tls-certbot-ca-file"
+                  type="text"
+                  placeholder="chain.pem"
+                  class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              id="tls-save-btn"
+              class="px-4 py-2 rounded-lg bg-cyan-700 hover:bg-cyan-600 transition-colors text-white font-medium"
+            >
+              <i class="fa-solid fa-certificate mr-2"></i>Save TLS Settings
+            </button>
+          </form>
+
           <p id="settings-message" class="hidden text-sm rounded-lg px-3 py-2"></p>
         </div>
 

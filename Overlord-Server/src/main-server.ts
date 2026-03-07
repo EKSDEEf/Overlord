@@ -126,6 +126,7 @@ const DEPLOY_ROOT = path.join(DATA_DIR, "deploy");
 const TLS_CERT_PATH = config.tls.certPath;
 const TLS_KEY_PATH = config.tls.keyPath;
 const TLS_CA_PATH = config.tls.caPath; 
+const TLS_CERTBOT = config.tls.certbot;
 
 const pluginLoadedByClient = new Map<string, Set<string>>();
 const pendingPluginEvents = new Map<string, Array<{ event: string; payload: any }>>();
@@ -220,10 +221,11 @@ const pendingScripts = new Map<string, PendingScript>();
 
 async function startServer() {
   await loadPluginState();
-  const tlsOptions = await prepareTlsOptions({
+  const tls = await prepareTlsOptions({
     certPath: TLS_CERT_PATH,
     keyPath: TLS_KEY_PATH,
     caPath: TLS_CA_PATH,
+    certbot: TLS_CERTBOT,
   });
 
   const routeDeps = {
@@ -347,7 +349,7 @@ async function startServer() {
   const server = Bun.serve<SocketData>({
     port: PORT,
     hostname: HOST,
-    tls: tlsOptions,
+    tls: tls.tlsOptions,
     idleTimeout: 255,
     fetch: createHttpFetchHandler({
       metrics,
@@ -395,7 +397,7 @@ async function startServer() {
     disconnectTimeoutMs: DISCONNECT_TIMEOUT_MS,
   });
 
-  logServerStartup(server, TLS_CERT_PATH);
+  logServerStartup(server, tls.certPathUsed, tls.source);
 }
 
 startServer();

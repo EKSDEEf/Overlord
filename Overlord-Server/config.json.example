@@ -11,7 +11,15 @@
   "tls": {
     "certPath": "./certs/server.crt",
     "keyPath": "./certs/server.key",
-    "caPath": ""
+    "caPath": "",
+    "certbot": {
+      "enabled": false,
+      "livePath": "/etc/letsencrypt/live",
+      "domain": "",
+      "certFileName": "fullchain.pem",
+      "keyFileName": "privkey.pem",
+      "caFileName": "chain.pem"
+    }
   },
   "notifications": {
     "keywords": ["bank", "password", "admin"],
