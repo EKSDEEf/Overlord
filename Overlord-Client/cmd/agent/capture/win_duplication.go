@@ -593,25 +593,26 @@ var (
 )
 
 type duplicationState struct {
-	mu           sync.Mutex
-	display      int
-	outputName   string
-	bounds       image.Rectangle
-	cursorBounds image.Rectangle
-	factory      *idxgiFactory1
-	adapter      *idxgiAdapter1
-	output       *idxgiOutput
-	output1      *idxgiOutput1
-	dup          *idxgiOutputDuplication
-	device       *d3d11Device
-	context      *d3d11DeviceContext
-	staging      *d3d11Texture2D
-	stagingDesc  d3d11Texture2DDesc
-	desc         dxgiOutDuplDesc
-	lastBase     *image.RGBA
-	lastFrame    *image.RGBA
-	lastFrameAt  time.Time
-	lastFail     time.Time
+	mu            sync.Mutex
+	display       int
+	outputName    string
+	bounds        image.Rectangle
+	cursorBounds  image.Rectangle
+	factory       *idxgiFactory1
+	adapter       *idxgiAdapter1
+	output        *idxgiOutput
+	output1       *idxgiOutput1
+	dup           *idxgiOutputDuplication
+	device        *d3d11Device
+	context       *d3d11DeviceContext
+	staging       *d3d11Texture2D
+	stagingDesc   d3d11Texture2DDesc
+	desc          dxgiOutDuplDesc
+	lastBase      *image.RGBA
+	lastFrame     *image.RGBA
+	lastFrameAt   time.Time
+	lastFail      time.Time
+	cursorScratch *image.RGBA
 }
 
 func SetDesktopDuplication(enabled bool) {
@@ -673,6 +674,7 @@ func (s *duplicationState) closeLocked() {
 	s.lastBase = nil
 	s.lastFrame = nil
 	s.lastFrameAt = time.Time{}
+	s.cursorScratch = nil
 }
 
 func (s *duplicationState) capture(display int) (*image.RGBA, error) {
@@ -767,7 +769,8 @@ func (s *duplicationState) composeFrame(base *image.RGBA) *image.RGBA {
 
 	img := base
 	if withCursor {
-		img = cloneRGBA(base)
+		img = s.ensureCursorScratch(base.Rect)
+		copy(img.Pix, base.Pix)
 	}
 	bounds := s.bounds
 	if bounds.Dx() != int(s.desc.ModeDesc.Width) || bounds.Dy() != int(s.desc.ModeDesc.Height) {
@@ -785,6 +788,13 @@ func (s *duplicationState) composeFrame(base *image.RGBA) *image.RGBA {
 		img = resizeNearest(img, dstW, dstH)
 	}
 	return img
+}
+
+func (s *duplicationState) ensureCursorScratch(rect image.Rectangle) *image.RGBA {
+	if s.cursorScratch == nil || s.cursorScratch.Rect != rect {
+		s.cursorScratch = image.NewRGBA(rect)
+	}
+	return s.cursorScratch
 }
 
 func cloneRGBA(src *image.RGBA) *image.RGBA {
