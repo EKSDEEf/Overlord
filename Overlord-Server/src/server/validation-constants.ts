@@ -23,4 +23,6 @@ export const ALLOWED_PLATFORMS = new Set([
   "linux-armv7",
   "darwin-amd64",
   "darwin-arm64",
+  "freebsd-amd64",
+  "freebsd-arm64",
 ]);

@@ -266,27 +266,25 @@ export async function startBuildProcess(
 
       try {
         const buildTool = config.obfuscate ? "garble" : "go";
-        const verboseArg = "-x -v ";
         const tagArg = config.noPrinting ? "-tags noprint " : "";
-        logger.info(`[build:${buildId.substring(0, 8)}] Building: ${buildTool} build ${verboseArg}${tagArg}${ldflags ? `-ldflags="${ldflags}" ` : ""}-o ${outDir}/${outputName} ./cmd/agent`);
+        logger.info(`[build:${buildId.substring(0, 8)}] Building: ${buildTool} build ${tagArg}${ldflags ? `-ldflags="${ldflags}" ` : ""}-o ${outDir}/${outputName} ./cmd/agent`);
         logger.info(`[build:${buildId.substring(0, 8)}] Environment: GOOS=${os} GOARCH=${actualArch} CGO_ENABLED=${env.CGO_ENABLED} CC=${env.CC || "<default>"}`);
-        sendToStream({ type: "output", text: "Build trace enabled (-x -v)\n", level: "info" });
 
         const buildCmd = config.obfuscate
           ? (config.noPrinting
               ? (ldflags
-                  ? $`garble build -x -v -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-                  : $`garble build -x -v -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
+              ? $`garble build -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
+              : $`garble build -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
               : (ldflags
-                  ? $`garble build -x -v -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-                  : $`garble build -x -v -o ${outDir}/${outputName} ./cmd/agent`))
+              ? $`garble build -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
+              : $`garble build -o ${outDir}/${outputName} ./cmd/agent`))
           : (config.noPrinting
               ? (ldflags
-                  ? $`go build -x -v -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-                  : $`go build -x -v -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
+              ? $`go build -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
+              : $`go build -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
               : (ldflags
-                  ? $`go build -x -v -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-                  : $`go build -x -v -o ${outDir}/${outputName} ./cmd/agent`));
+              ? $`go build -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
+              : $`go build -o ${outDir}/${outputName} ./cmd/agent`));
 
         const proc = buildCmd.env(env).cwd(clientDir).nothrow();
         let result: any;
