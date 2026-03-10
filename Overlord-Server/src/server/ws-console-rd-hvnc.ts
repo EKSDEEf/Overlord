@@ -562,10 +562,18 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
       if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_move", { x: Number(payload.x) || 0, y: Number(payload.y) || 0 });
       break;
     case "hvnc_mouse_down":
-      if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_down", { button: Number(payload.button) || 0 });
+      if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_down", {
+        button: Number(payload.button) || 0,
+        x: Number(payload.x) || 0,
+        y: Number(payload.y) || 0,
+      });
       break;
     case "hvnc_mouse_up":
-      if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_up", { button: Number(payload.button) || 0 });
+      if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_up", {
+        button: Number(payload.button) || 0,
+        x: Number(payload.x) || 0,
+        y: Number(payload.y) || 0,
+      });
       break;
     case "hvnc_mouse_wheel":
       if (state.isStreaming) sendHVNCCommand(target, "hvnc_mouse_wheel", { delta: Number(payload.delta) || 0, x: Number(payload.x) || 0, y: Number(payload.y) || 0 });
