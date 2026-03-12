@@ -70,6 +70,7 @@ fetch_minhook() {
   cp -f "$tmpdir/minhook/src/hde/hde64.h" "$MINHOOK_DIR/hde/" 2>/dev/null || true
   cp -f "$tmpdir/minhook/src/hde/hde32.c" "$MINHOOK_DIR/hde/" 2>/dev/null || true
   cp -f "$tmpdir/minhook/src/hde/hde32.h" "$MINHOOK_DIR/hde/" 2>/dev/null || true
+  cp -f "$tmpdir/minhook/src/hde/pstdint.h" "$MINHOOK_DIR/hde/" 2>/dev/null || true
   cp -f "$tmpdir/minhook/src/hde/table64.h" "$MINHOOK_DIR/hde/" 2>/dev/null || true
   cp -f "$tmpdir/minhook/src/hde/table32.h" "$MINHOOK_DIR/hde/" 2>/dev/null || true
   cp -f "$tmpdir/minhook/include/MinHook.h" "$MINHOOK_DIR/" 2>/dev/null || true
