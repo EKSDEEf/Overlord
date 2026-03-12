@@ -32,12 +32,25 @@ HINSTANCE hAppInstance = NULL;
 // Store the parameter passed to ReflectiveLoader so DllMain can access it
 LPVOID g_lpReflectiveParameter = NULL;
 //===============================================================================================//
-#pragma intrinsic( _ReturnAddress )
+#ifdef _MSC_VER
+#pragma intrinsic(_ReturnAddress)
+#define RDI_NOINLINE __declspec(noinline)
+#else
+#define RDI_NOINLINE __attribute__((noinline))
+#endif
+
 // This function can not be inlined by the compiler or we will not get the address we expect. Ideally 
 // this code will be compiled with the /O2 and /Ob1 switches. Bonus points if we could take advantage of 
 // RIP relative addressing in this instance but I dont believe we can do so with the compiler intrinsics 
 // available (and no inline asm available under x64).
-__declspec(noinline) ULONG_PTR caller(VOID) { return (ULONG_PTR)_ReturnAddress(); }
+RDI_NOINLINE ULONG_PTR caller(VOID)
+{
+#ifdef _MSC_VER
+	return (ULONG_PTR)_ReturnAddress();
+#else
+	return (ULONG_PTR)__builtin_return_address(0);
+#endif
+}
 //===============================================================================================//
 
 // Note 1: If you want to have your own DllMain, define REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN,  
