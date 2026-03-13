@@ -18,6 +18,7 @@ import {
   updateUserPassword,
   updateUserRole,
 } from "../../users";
+import { makeAuthCookie } from "./auth-cookie";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -131,7 +132,7 @@ export async function handleUsersRoutes(
             {
               headers: {
                 "Content-Type": "application/json",
-                "Set-Cookie": `overlord_token=${newToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionTtlSeconds}`,
+                "Set-Cookie": makeAuthCookie(newToken, sessionTtlSeconds, req),
               },
             },
           );

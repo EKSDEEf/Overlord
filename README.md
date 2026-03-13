@@ -49,6 +49,7 @@ services:
       - OVERLORD_TLS_KEY=/app/certs/server.key
       - OVERLORD_TLS_CA=
       - OVERLORD_TLS_OFFLOAD=false
+      - OVERLORD_AUTH_COOKIE_SECURE=auto
       - OVERLORD_TLS_CERTBOT_ENABLED=false
       - OVERLORD_TLS_CERTBOT_LIVE_PATH=/etc/letsencrypt/live
       - OVERLORD_TLS_CERTBOT_DOMAIN=
@@ -66,7 +67,7 @@ services:
     networks:
       - overlord-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "https://localhost:5173/health"]
+      test: ["CMD-SHELL", "curl -f ${OVERLORD_HEALTHCHECK_URL:-https://localhost:5173/health} >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -348,6 +349,8 @@ Override with:
 If your platform terminates TLS before traffic reaches Overlord, set:
 
 - `OVERLORD_TLS_OFFLOAD=true`
+- `OVERLORD_HEALTHCHECK_URL=http://localhost:5173/health`
+- `OVERLORD_PUBLISH_HOST=127.0.0.1` (recommended for local proxies like ngrok)
 
 When enabled:
 
@@ -355,3 +358,22 @@ When enabled:
 - external URL remains `https://...` through your platform proxy
 - health checks should use `http://localhost:$PORT/health` inside the container
 - do not expose internal container HTTP port directly to the internet
+
+For ngrok/local reverse proxy use, a common setup is:
+
+```sh
+OVERLORD_TLS_OFFLOAD=true
+OVERLORD_HEALTHCHECK_URL=http://localhost:5173/health
+OVERLORD_PUBLISH_HOST=127.0.0.1
+```
+
+Then point ngrok at local HTTP:
+
+```sh
+ngrok http http://127.0.0.1:5173
+```
+
+Notes:
+
+- Keep `HOST=0.0.0.0` inside the container. Limiting exposure should be done with publish binding (`OVERLORD_PUBLISH_HOST`), not server bind host.
+- If your `.env` secret/password includes `$`, escape as `$$` to avoid Docker Compose variable-expansion warnings.

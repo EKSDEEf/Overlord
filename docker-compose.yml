@@ -10,7 +10,8 @@ services:
         - type=local,dest=.docker-cache/buildx,mode=max
     container_name: overlord-server
     ports:
-      - "${PORT:-5173}:5173"
+      # Bind host-published port. Use 127.0.0.1 for local reverse proxies (ngrok/caddy/traefik).
+      - "${OVERLORD_PUBLISH_HOST:-0.0.0.0}:${PORT:-5173}:5173"
     environment:
       PORT: ${PORT:-5173}
       HOST: ${HOST:-0.0.0.0}
@@ -28,6 +29,9 @@ services:
       # Set true only behind a trusted reverse proxy that terminates TLS (for example Render).
       # Default false keeps current behavior: Overlord terminates TLS in-process.
       OVERLORD_TLS_OFFLOAD: ${OVERLORD_TLS_OFFLOAD:-false}
+      # Cookie security mode: auto (default), true, or false.
+      # auto: Secure cookie on HTTPS requests / X-Forwarded-Proto=https.
+      OVERLORD_AUTH_COOKIE_SECURE: ${OVERLORD_AUTH_COOKIE_SECURE:-auto}
       # Optional certbot integration (used only when NODE_ENV=production)
       OVERLORD_TLS_CERTBOT_ENABLED: ${OVERLORD_TLS_CERTBOT_ENABLED:-false}
       OVERLORD_TLS_CERTBOT_LIVE_PATH: ${OVERLORD_TLS_CERTBOT_LIVE_PATH:-/etc/letsencrypt/live}
@@ -53,7 +57,8 @@ services:
     networks:
       - overlord-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "https://localhost:5173/health"]
+      # Use http:// when OVERLORD_TLS_OFFLOAD=true.
+      test: ["CMD-SHELL", "curl -f ${OVERLORD_HEALTHCHECK_URL:-https://localhost:5173/health} >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

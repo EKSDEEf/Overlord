@@ -15,6 +15,7 @@ import {
   recordSuccessfulAttempt,
 } from "../../rateLimit";
 import { getUserById } from "../../users";
+import { makeAuthCookie, makeAuthCookieClear } from "./auth-cookie";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -95,7 +96,7 @@ export async function handleAuthRoutes(
           {
             headers: {
               "Content-Type": "application/json",
-              "Set-Cookie": `overlord_token=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionTtlSeconds}`,
+              "Set-Cookie": makeAuthCookie(token, sessionTtlSeconds, req),
             },
           },
         );
@@ -148,7 +149,7 @@ export async function handleAuthRoutes(
     return new Response(JSON.stringify({ ok: true }), {
       headers: {
         "Content-Type": "application/json",
-        "Set-Cookie": `overlord_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`,
+        "Set-Cookie": makeAuthCookieClear(req),
       },
     });
   }
