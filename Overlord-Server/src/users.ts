@@ -129,6 +129,25 @@ try {
   }
 }
 
+const notificationColumns: Array<{ sql: string; label: string }> = [
+  { sql: `ALTER TABLE users ADD COLUMN webhook_enabled INTEGER DEFAULT 0`, label: "webhook_enabled" },
+  { sql: `ALTER TABLE users ADD COLUMN webhook_url TEXT DEFAULT NULL`, label: "webhook_url" },
+  { sql: `ALTER TABLE users ADD COLUMN webhook_template TEXT DEFAULT NULL`, label: "webhook_template" },
+  { sql: `ALTER TABLE users ADD COLUMN telegram_enabled INTEGER DEFAULT 0`, label: "telegram_enabled" },
+  { sql: `ALTER TABLE users ADD COLUMN telegram_bot_token TEXT DEFAULT NULL`, label: "telegram_bot_token" },
+  { sql: `ALTER TABLE users ADD COLUMN telegram_template TEXT DEFAULT NULL`, label: "telegram_template" },
+];
+for (const col of notificationColumns) {
+  try {
+    db.exec(col.sql);
+    logger.info(`[users] Added ${col.label} column to existing database`);
+  } catch (err: any) {
+    if (!err.message?.includes("duplicate column name")) {
+      logger.error("[users] Migration error:", err);
+    }
+  }
+}
+
 const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as {
   count: number;
 };
@@ -539,4 +558,101 @@ export function getUsersWithTelegramChatId(): Array<{ id: number; username: stri
       "SELECT id, username, role, client_scope, telegram_chat_id FROM users WHERE telegram_chat_id IS NOT NULL AND telegram_chat_id != ''",
     )
     .all() as any[];
+}
+
+// ─── Per-user notification delivery settings ─────────────────────────────────
+
+export interface UserNotificationSettings {
+  webhook_enabled: number;
+  webhook_url: string | null;
+  webhook_template: string | null;
+  telegram_enabled: number;
+  telegram_bot_token: string | null;
+  telegram_chat_id: string | null;
+  telegram_template: string | null;
+}
+
+export function getUserNotificationSettings(userId: number): UserNotificationSettings | null {
+  const row = db
+    .prepare(
+      "SELECT webhook_enabled, webhook_url, webhook_template, telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template FROM users WHERE id = ?",
+    )
+    .get(userId) as UserNotificationSettings | undefined;
+  return row ?? null;
+}
+
+export function updateUserNotificationSettings(
+  userId: number,
+  settings: Partial<UserNotificationSettings>,
+): { success: boolean; error?: string } {
+  const fields: string[] = [];
+  const values: any[] = [];
+
+  if ("webhook_enabled" in settings) {
+    fields.push("webhook_enabled = ?");
+    values.push(settings.webhook_enabled ? 1 : 0);
+  }
+  if ("webhook_url" in settings) {
+    fields.push("webhook_url = ?");
+    values.push(settings.webhook_url || null);
+  }
+  if ("webhook_template" in settings) {
+    fields.push("webhook_template = ?");
+    values.push(settings.webhook_template || null);
+  }
+  if ("telegram_enabled" in settings) {
+    fields.push("telegram_enabled = ?");
+    values.push(settings.telegram_enabled ? 1 : 0);
+  }
+  if ("telegram_bot_token" in settings) {
+    fields.push("telegram_bot_token = ?");
+    values.push(settings.telegram_bot_token || null);
+  }
+  if ("telegram_chat_id" in settings) {
+    fields.push("telegram_chat_id = ?");
+    values.push(settings.telegram_chat_id || null);
+  }
+  if ("telegram_template" in settings) {
+    fields.push("telegram_template = ?");
+    values.push(settings.telegram_template || null);
+  }
+
+  if (fields.length === 0) return { success: true };
+
+  try {
+    values.push(userId);
+    db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] updateUserNotificationSettings error:", err);
+    return { success: false, error: err.message || "Failed to update notification settings" };
+  }
+}
+
+export interface UserDeliveryRow {
+  id: number;
+  username: string;
+  role: UserRole;
+  client_scope: ClientAccessScope;
+  webhook_enabled: number;
+  webhook_url: string | null;
+  webhook_template: string | null;
+  telegram_enabled: number;
+  telegram_bot_token: string | null;
+  telegram_chat_id: string | null;
+  telegram_template: string | null;
+}
+
+export function getUsersForNotificationDelivery(): UserDeliveryRow[] {
+  return db
+    .prepare(
+      `SELECT id, username, role, client_scope,
+              webhook_enabled, webhook_url, webhook_template,
+              telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template
+       FROM users
+       WHERE (webhook_enabled = 1 AND webhook_url IS NOT NULL AND webhook_url != '')
+          OR (telegram_enabled = 1 AND telegram_bot_token IS NOT NULL AND telegram_bot_token != ''
+              AND telegram_chat_id IS NOT NULL AND telegram_chat_id != '')`,
+    )
+    .all() as UserDeliveryRow[];
 }

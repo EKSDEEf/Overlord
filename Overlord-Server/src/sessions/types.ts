@@ -19,6 +19,7 @@ export type SocketData = {
   sessionId?: string;
   ip?: string;
   userRole?: string;
+  userId?: number;
   wasKnown?: boolean;
   autoTasksRan?: boolean;
 };
@@ -55,6 +56,8 @@ export type NotificationsViewer = {
   id: string;
   viewer: ServerWebSocket<SocketData>;
   createdAt: number;
+  userId?: number;
+  userRole?: string;
 };
 
 export type KeyloggerViewer = {

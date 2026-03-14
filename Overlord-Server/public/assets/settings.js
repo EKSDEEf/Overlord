@@ -580,14 +580,12 @@ async function init() {
   try {
     await loadCurrentUser();
     loadPrefs();
-    await loadMyTelegram();
     await loadSecurityPolicy();
     await loadTlsSettings();
     await loadBannedIps();
 
     passwordForm.addEventListener("submit", updatePassword);
     prefsForm.addEventListener("submit", savePrefs);
-    if (saveMyTelegramBtn) saveMyTelegramBtn.addEventListener("click", saveMyTelegram);
     securityForm.addEventListener("submit", saveSecurityPolicy);
     tlsForm.addEventListener("submit", saveTlsSettings);
     tlsCertbotAutoBtn.addEventListener("click", runCertbotAutoSetup);

@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "./auth";
 import { loadConfig, getConfig } from "./config";
 import { flushAuditLogsSync } from "./auditLog";
-import { getUserById, getUsersWithTelegramChatId, canUserAccessClient, setUserClientAccessRule, setUserClientAccessScope, getUserClientAccessScope } from "./users";
+import { getUserById, getUsersForNotificationDelivery, canUserAccessClient, setUserClientAccessRule, setUserClientAccessScope, getUserClientAccessScope } from "./users";
 import { requireAuth, requirePermission } from "./rbac";
 import { metrics } from "./metrics";
 import { ensureDataDir } from "./paths";
@@ -46,7 +46,7 @@ import {
   takePendingNotificationScreenshot,
   type NotificationRecord,
   type PendingNotificationScreenshot,
-  type PerUserTelegramRecipient,
+  type UserDeliveryTarget,
 } from "./server/notification-delivery";
 import {
   ensurePluginExtracted as ensurePluginExtractedFromRoot,
@@ -228,15 +228,23 @@ const storeNotificationScreenshotForPending = (
   height?: number,
 ) => storeNotificationScreenshot(notificationHistory, pending, bytes, format, width, height);
 const deliverNotificationWithScreenshotForRecord = (record: NotificationRecord) => {
-  const getPerUserRecipients = (clientId: string): PerUserTelegramRecipient[] => {
-    const usersWithTelegram = getUsersWithTelegramChatId();
-    return usersWithTelegram.map((u) => ({
-      userId: u.id,
-      chatId: u.telegram_chat_id,
-      canAccessClient: canUserAccessClient(u.id, u.role, clientId),
-    }));
+  const getUserDeliveryTargets = (clientId: string): UserDeliveryTarget[] => {
+    const deliveryUsers = getUsersForNotificationDelivery();
+    return deliveryUsers
+      .filter((u) => canUserAccessClient(u.id, u.role, clientId))
+      .map((u) => ({
+        userId: u.id,
+        username: u.username,
+        webhookEnabled: u.webhook_enabled === 1,
+        webhookUrl: u.webhook_url || "",
+        webhookTemplate: u.webhook_template,
+        telegramEnabled: u.telegram_enabled === 1,
+        telegramBotToken: u.telegram_bot_token || "",
+        telegramChatId: u.telegram_chat_id || "",
+        telegramTemplate: u.telegram_template,
+      }));
   };
-  return deliverNotificationWithScreenshot(record, getNotificationConfig, getPerUserRecipients);
+  return deliverNotificationWithScreenshot(record, getUserDeliveryTargets);
 };
 
 const notificationPluginHandlers = createNotificationPluginHandlers({
@@ -248,6 +256,7 @@ const notificationPluginHandlers = createNotificationPluginHandlers({
   pendingPluginEvents,
   pluginState,
   getNotificationConfig,
+  canUserAccessClient,
   storeNotificationScreenshot: storeNotificationScreenshotForPending,
   deliverNotificationWithScreenshot: deliverNotificationWithScreenshotForRecord,
   savePluginState,

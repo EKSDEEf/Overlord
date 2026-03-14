@@ -205,7 +205,7 @@ export async function handleWsUpgradeRoutes(
       return new Response("Unauthorized", { status: 401 });
     }
     const ip = server.requestIP(req)?.address || "";
-    if (server.upgrade(req, { data: { role: "notifications_viewer", clientId: "", ip, userRole: user.role } })) {
+    if (server.upgrade(req, { data: { role: "notifications_viewer", clientId: "", ip, userRole: user.role, userId: user.userId } })) {
       return new Response();
     }
     return new Response("Upgrade failed", { status: 500 });

@@ -54,6 +54,7 @@ type CreateDeps = {
   pendingPluginEvents: Map<string, Array<{ event: string; payload: any }>>;
   pluginState: { enabled: Record<string, boolean>; lastError: Record<string, string> };
   getNotificationConfig: () => NotificationConfigShape;
+  canUserAccessClient: (userId: number, userRole: string, clientId: string) => boolean;
   storeNotificationScreenshot: (
     pending: PendingNotificationScreenshot,
     bytes: Uint8Array,
@@ -175,14 +176,28 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
   return {
     handleNotificationViewerOpen(ws: ServerWebSocket<SocketData>) {
       const sessionId = uuidv4();
+      const userId = ws.data.userId;
+      const userRole = ws.data.userRole || "";
       sessionManager.addNotificationSession({
         id: sessionId,
         viewer: ws,
         createdAt: Date.now(),
+        userId,
+        userRole,
       });
       ws.data.sessionId = sessionId;
-      logger.info(`[notify] viewer connected session=${sessionId}`);
-      safeSendViewer(ws, { type: "ready", sessionId, history: deps.notificationHistory });
+      logger.info(`[notify] viewer connected session=${sessionId} userId=${userId ?? "?"} role=${userRole}`);
+
+      const visibleHistory =
+        userRole === "admin"
+          ? deps.notificationHistory
+          : deps.notificationHistory.filter(
+              (item) =>
+                userId !== undefined &&
+                deps.canUserAccessClient(userId, userRole, item.clientId),
+            );
+
+      safeSendViewer(ws, { type: "ready", sessionId, history: visibleHistory });
     },
 
     handleNotification(clientId: string, payload: any) {
@@ -221,6 +236,13 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
       requestNotificationScreenshot(info, record);
 
       for (const session of sessionManager.getAllNotificationSessions().values()) {
+        const sRole = session.userRole ?? session.viewer.data.userRole ?? "";
+        const sUserId = session.userId ?? session.viewer.data.userId;
+        if (sRole !== "admin") {
+          if (sUserId === undefined || !deps.canUserAccessClient(sUserId, sRole, clientId)) {
+            continue;
+          }
+        }
         safeSendViewer(session.viewer, { type: "notification", item: record });
       }
 

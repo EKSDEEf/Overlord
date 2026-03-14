@@ -106,32 +106,13 @@
 
           <div id="telegram-settings" class="space-y-3 pt-1 border-t border-slate-800 pt-4">
             <div>
-              <h3 class="font-medium">Notification Settings</h3>
+              <h3 class="font-medium">Notification Delivery</h3>
               <p class="text-xs text-slate-400">
-                Receive Telegram notifications for clients you have access to.
+                Webhook and Telegram Bot settings have moved to the
+                <a href="/notifications" class="text-sky-400 hover:underline font-medium">Notifications page</a>.
+                Configure your personal webhook and Telegram bot there.
               </p>
             </div>
-            <label class="block">
-              <span class="text-sm text-slate-300">Your Telegram Chat ID</span>
-              <input
-                id="my-telegram-chat-id"
-                type="text"
-                placeholder="e.g. 123456789 (leave empty to disable)"
-                class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-            </label>
-            <p class="text-xs text-slate-400">
-              Send <code>/start</code> to the Telegram bot, then use <code>/id</code> or
-              <a href="https://t.me/userinfobot" target="_blank" rel="noopener" class="text-sky-400 hover:underline">@userinfobot</a>
-              to find your chat ID.
-            </p>
-            <button
-              type="button"
-              id="save-my-telegram"
-              class="px-4 py-2 rounded-lg bg-cyan-700 hover:bg-cyan-600 transition-colors text-white font-medium"
-            >
-              <i class="fa-brands fa-telegram mr-2"></i>Save Telegram Settings
-            </button>
           </div>
 
           <form id="security-form" class="space-y-3 pt-1 border-t border-slate-800 pt-4">
