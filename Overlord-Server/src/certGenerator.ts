@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, unlinkSync } from "fs";
 import { dirname } from "path";
 
 interface CertOptions {
@@ -91,11 +91,7 @@ ${additionalIPs.map((ip, i) => `IP.${i + 3} = ${ip}`).join("\n")}
     ]);
 
     try {
-      await Bun.file(configPath)
-        .text()
-        .then(() => {
-          spawn("rm", ["-f", configPath]);
-        });
+      unlinkSync(configPath);
     } catch {}
 
     console.log(`[TLS] ✓ Certificate generated successfully`);

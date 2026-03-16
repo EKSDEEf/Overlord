@@ -79,8 +79,27 @@
           </div>
         </div>
 
+        <!-- Mode Toggle -->
+        <div class="lg:col-span-3">
+          <div class="flex items-center gap-2 bg-slate-900/70 rounded-xl border border-slate-800 p-3">
+            <button id="mode-toggle-code" class="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-emerald-600 text-white">
+              <i class="fa-solid fa-code"></i> Code Editor
+            </button>
+            <button id="mode-toggle-visual" class="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-slate-800 text-slate-300 hover:bg-slate-700">
+              <i class="fa-solid fa-puzzle-piece"></i> Visual Builder
+            </button>
+          </div>
+        </div>
+
+        <!-- Visual Builder (hidden by default) -->
+        <div id="visual-builder-section" class="lg:col-span-3 hidden">
+          <div class="bg-slate-900/70 rounded-xl border border-slate-800 p-6">
+            <div id="visual-builder-container"></div>
+          </div>
+        </div>
+
         <!-- Script Editor -->
-        <div class="lg:col-span-2">
+        <div id="code-editor-section" class="lg:col-span-2">
           <div class="bg-slate-900/70 rounded-xl border border-slate-800 p-6 h-full flex flex-col">
             <div class="flex items-center justify-between mb-4">
               <h2 class="text-xl font-semibold">Script Editor</h2>

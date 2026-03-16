@@ -622,4 +622,39 @@ if (window.CodeMirror && scriptEditor) {
     lineWrapping: true,
   });
   editorInstance.setSize(null, "100%");
+  window._vbCodeMirror = editorInstance;
 }
+
+const modeToggleCode = document.getElementById("mode-toggle-code");
+const modeToggleVisual = document.getElementById("mode-toggle-visual");
+const codeEditorSection = document.getElementById("code-editor-section");
+const visualBuilderSection = document.getElementById("visual-builder-section");
+const rightColumn = codeEditorSection?.parentElement?.querySelector(".lg\\:col-span-1");
+let visualBuilderInited = false;
+
+function setMode(mode) {
+  if (mode === "visual") {
+    codeEditorSection?.classList.add("hidden");
+    if (rightColumn) rightColumn.classList.add("hidden");
+    visualBuilderSection?.classList.remove("hidden");
+    modeToggleVisual.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-emerald-600 text-white";
+    modeToggleCode.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-slate-800 text-slate-300 hover:bg-slate-700";
+    if (!visualBuilderInited) {
+      import("/assets/visual-builder.js").then((mod) => {
+        const container = document.getElementById("visual-builder-container");
+        if (container) mod.initVisualBuilder(container);
+        visualBuilderInited = true;
+      });
+    }
+  } else {
+    codeEditorSection?.classList.remove("hidden");
+    if (rightColumn) rightColumn.classList.remove("hidden");
+    visualBuilderSection?.classList.add("hidden");
+    modeToggleCode.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-emerald-600 text-white";
+    modeToggleVisual.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-slate-800 text-slate-300 hover:bg-slate-700";
+    if (editorInstance) editorInstance.refresh();
+  }
+}
+
+modeToggleCode?.addEventListener("click", () => setMode("code"));
+modeToggleVisual?.addEventListener("click", () => setMode("visual"));

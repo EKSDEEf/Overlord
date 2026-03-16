@@ -15,6 +15,7 @@ RUN apt-get update \
        wget \
        git \
        unzip \
+       upx-ucl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)

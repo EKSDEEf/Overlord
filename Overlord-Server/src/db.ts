@@ -651,7 +651,21 @@ export function getBuildByTag(buildTag: string): BuildRecord | null {
   };
 }
 
-export function getAllBuilds(): BuildRecord[] {
+export function getAllBuilds(userId?: number, role?: string): BuildRecord[] {
+  if (role !== "admin" && userId != null) {
+    const rows = db
+      .query<any>(`SELECT * FROM builds WHERE built_by_user_id = ? ORDER BY start_time DESC`)
+      .all(userId);
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      startTime: row.start_time,
+      expiresAt: row.expires_at,
+      files: JSON.parse(row.files),
+      buildTag: row.build_tag || undefined,
+      builtByUserId: row.built_by_user_id || undefined,
+    }));
+  }
   const rows = db
     .query<any>(`SELECT * FROM builds ORDER BY start_time DESC`)
     .all();

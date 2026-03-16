@@ -231,6 +231,23 @@
                 </p>
               </div>
 
+              <!-- Output Name -->
+              <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2" for="output-name">
+                  Output Filename
+                </label>
+                <input
+                  type="text"
+                  id="output-name"
+                  name="output-name"
+                  placeholder="agent (default)"
+                  class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
+                />
+                <p class="text-xs text-slate-500 mt-1">
+                  Optional: Custom name prefix for output binaries (letters, numbers, . _ - only)
+                </p>
+              </div>
+
               <!-- Mutex -->
               <div>
                 <label
@@ -358,7 +375,8 @@
                     <div class="flex flex-col">
                       <span class="flex items-center gap-2"
                         ><i class="fa-solid fa-window-minimize text-emerald-400"></i>
-                        Hide Console Window (Windows)</span
+                        Hide Console Window
+                        <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 border border-blue-700/50 font-semibold"><i class="fa-brands fa-windows mr-0.5"></i>Windows</span></span
                       >
                       <span class="text-xs text-slate-500"
                         >Builds Windows EXEs as GUI apps (no console)</span
@@ -384,6 +402,103 @@
                       >
                     </div>
                   </label>
+                  <label
+                    class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-cyan-500 transition-colors"
+                    title="Compress binaries with UPX to reduce file size"
+                  >
+                    <input
+                      type="checkbox"
+                      name="enable-upx"
+                      class="w-4 h-4"
+                    />
+                    <div class="flex flex-col">
+                      <span class="flex items-center gap-2"
+                        ><i class="fa-solid fa-compress text-cyan-400"></i>
+                        UPX Compression</span
+                      >
+                      <span class="text-xs text-slate-500"
+                        >Compress binaries with UPX (requires UPX installed on server)</span
+                      >
+                    </div>
+                  </label>
+                  <div
+                    id="upx-settings-container"
+                    class="hidden pl-3 border-l-2 border-cyan-500/40"
+                  >
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer">
+                      <input type="checkbox" name="upx-strip-headers" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span>Strip UPX Headers</span>
+                        <span class="text-xs text-slate-500">Remove UPX magic bytes to avoid signature-based detection</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Garble Settings (shown when obfuscate is checked) -->
+              <div id="garble-settings-container" class="hidden">
+                <label class="block text-sm font-medium text-slate-300 mb-2">
+                  <i class="fa-solid fa-mask text-purple-400"></i> Garble Settings
+                </label>
+                <div class="flex flex-col gap-2 pl-3 border-l-2 border-purple-500/40">
+                  <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer">
+                    <input type="checkbox" name="garble-literals" class="w-4 h-4" />
+                    <div class="flex flex-col">
+                      <span>Obfuscate Literals (-literals)</span>
+                      <span class="text-xs text-slate-500">Obfuscate string and byte slice literals</span>
+                    </div>
+                  </label>
+                  <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer">
+                    <input type="checkbox" name="garble-tiny" class="w-4 h-4" />
+                    <div class="flex flex-col">
+                      <span>Tiny Mode (-tiny)</span>
+                      <span class="text-xs text-slate-500">Remove extra info like filenames and line numbers from panics</span>
+                    </div>
+                  </label>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1" for="garble-seed">Seed</label>
+                    <input type="text" id="garble-seed" name="garble-seed" placeholder="random (default)"
+                      class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-purple-500 transition-colors" />
+                    <p class="text-xs text-slate-500 mt-1">Alphanumeric seed for reproducible builds</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Windows Assembly / PE Metadata -->
+              <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2 flex-wrap">
+                  <i class="fa-brands fa-windows text-blue-400"></i> Windows Assembly Data
+                  <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 border border-blue-700/50 font-semibold"><i class="fa-brands fa-windows mr-0.5"></i>Windows only</span>
+                </label>
+                <div class="flex flex-col gap-2">
+                  <input type="text" id="assembly-title" name="assembly-title" placeholder="File Description"
+                    class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+                  <input type="text" id="assembly-product" name="assembly-product" placeholder="Product Name"
+                    class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+                  <input type="text" id="assembly-company" name="assembly-company" placeholder="Company Name"
+                    class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+                  <input type="text" id="assembly-version" name="assembly-version" placeholder="File Version (e.g. 1.0.0.0)"
+                    class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+                  <input type="text" id="assembly-copyright" name="assembly-copyright" placeholder="Copyright"
+                    class="w-full px-3 py-2 bg-slate-800/60 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+                </div>
+              </div>
+
+              <!-- Icon Upload -->
+              <div>
+                <label class="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2 flex-wrap">
+                  <i class="fa-solid fa-image text-yellow-400"></i> Custom Icon
+                  <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 border border-blue-700/50 font-semibold"><i class="fa-brands fa-windows mr-0.5"></i>Windows only</span>
+                  <span class="text-xs text-slate-500 font-normal">.ico, max 1MB</span>
+                </label>
+                <div class="flex items-center gap-3">
+                  <label class="flex items-center gap-2 px-4 py-2 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-yellow-500 transition-colors text-sm">
+                    <i class="fa-solid fa-upload text-yellow-400"></i>
+                    <span id="icon-label">Choose .ico file</span>
+                    <input type="file" id="icon-upload" name="icon-upload" accept=".ico" class="hidden" />
+                  </label>
+                  <button type="button" id="icon-clear" class="hidden text-xs text-red-400 hover:text-red-300">Clear</button>
                 </div>
               </div>
 

@@ -6,6 +6,7 @@ export type BuildStream = {
   expiresAt: number;
   files: { name: string; size: number; platform?: string }[];
   updates?: any[];
+  userId?: number;
 };
 
 export type BuildConfig = {
@@ -21,4 +22,16 @@ export type BuildConfig = {
   persistenceMethod?: string;
   hideConsole?: boolean;
   noPrinting?: boolean;
+  outputName?: string;
+  garbleLiterals?: boolean;
+  garbleTiny?: boolean;
+  garbleSeed?: string;
+  assemblyTitle?: string;
+  assemblyProduct?: string;
+  assemblyCompany?: string;
+  assemblyVersion?: string;
+  assemblyCopyright?: string;
+  iconBase64?: string;
+  enableUpx?: boolean;
+  upxStripHeaders?: boolean;
 };

