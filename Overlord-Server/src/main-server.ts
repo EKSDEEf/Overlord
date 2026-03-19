@@ -177,8 +177,8 @@ const ensurePluginExtracted = (pluginId: string) =>
   ensurePluginExtractedFromRoot(PLUGIN_ROOT, pluginId, sanitizePluginId);
 const listPluginManifests = () =>
   listPluginManifestsFromRoot(PLUGIN_ROOT, pluginState, savePluginState, ensurePluginExtracted);
-const loadPluginBundle = (pluginId: string) =>
-  loadPluginBundleFromRoot(PLUGIN_ROOT, pluginId, ensurePluginExtracted);
+const loadPluginBundle = (pluginId: string, clientOS?: string, clientArch?: string) =>
+  loadPluginBundleFromRoot(PLUGIN_ROOT, pluginId, ensurePluginExtracted, clientOS, clientArch);
 const startBuildProcess = (buildId: string, buildConfig: any) =>
   runBuildProcess(buildId, buildConfig, {
     generateBuildMutex,

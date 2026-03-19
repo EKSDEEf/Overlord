@@ -241,6 +241,7 @@ export type PluginManifest = {
   version?: string;
   description?: string;
   binary?: string;
+  binaries?: Record<string, string>;
   entry?: string;
   assets?: {
     html?: string;

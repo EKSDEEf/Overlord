@@ -486,7 +486,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "missing payload"})
 		}
 		manifestRaw, _ := payload["manifest"].(map[string]interface{})
-		wasmBytes, _ := payload["wasm"].([]byte)
+		binaryBytes, _ := payload["binary"].([]byte)
 		if env.Plugins == nil {
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "plugin manager not ready"})
 		}
@@ -494,7 +494,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		if err != nil {
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 		}
-		if err := env.Plugins.Load(ctx, manifest, wasmBytes); err != nil {
+		if err := env.Plugins.Load(ctx, manifest, binaryBytes); err != nil {
 			_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: manifest.ID, Event: "error", Error: err.Error()})
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 		}

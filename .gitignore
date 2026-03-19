@@ -46,6 +46,7 @@ Overlord-Server/plugins/*.zip
 Overlord-Server/plugins/.plugin-state.json
 plugin-sample-go/*.wasm
 plugin-sample-go/*.zip
+plugin-sample-go/*.h
 
 # Runtime data
 Overlord-Server/data/

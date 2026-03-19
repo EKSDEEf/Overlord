@@ -72,30 +72,43 @@ export async function ensurePluginExtracted(
 
   const zip = new AdmZip(zipPath);
   const entries = zip.getEntries();
-  let wasmEntry: Buffer | null = null;
   let htmlEntry: Buffer | null = null;
   let cssEntry: Buffer | null = null;
   let jsEntry: Buffer | null = null;
+  const nativeBinaries: Map<string, Buffer> = new Map();
 
   for (const entry of entries) {
     if (entry.isDirectory) continue;
     const base = path.basename(entry.entryName);
-    if (base.toLowerCase().endsWith(".wasm")) {
-      wasmEntry = entry.getData();
-    } else if (base.toLowerCase().endsWith(".html")) {
+    const lower = base.toLowerCase();
+    if (lower.endsWith(".so") || lower.endsWith(".dll") || lower.endsWith(".dylib")) {
+      nativeBinaries.set(base, entry.getData());
+    } else if (lower.endsWith(".html")) {
       htmlEntry = entry.getData();
-    } else if (base.toLowerCase().endsWith(".css")) {
+    } else if (lower.endsWith(".css")) {
       cssEntry = entry.getData();
-    } else if (base.toLowerCase().endsWith(".js")) {
+    } else if (lower.endsWith(".js")) {
       jsEntry = entry.getData();
     }
   }
 
-  if (!wasmEntry || !htmlEntry || !cssEntry || !jsEntry) {
-    throw new Error(`Invalid plugin bundle: ${safeId} (missing required files)`);
+  const hasNative = nativeBinaries.size > 0;
+  if (!hasNative) {
+    throw new Error(`Invalid plugin bundle: ${safeId} (no native binaries found)`);
+  }
+  if (!htmlEntry || !cssEntry || !jsEntry) {
+    throw new Error(`Invalid plugin bundle: ${safeId} (missing .html, .css, or .js)`);
   }
 
-  await fs.writeFile(path.join(pluginDir, `${safeId}.wasm`), wasmEntry);
+  const binariesMap: Record<string, string> = {};
+  for (const [filename, data] of nativeBinaries) {
+    await fs.writeFile(path.join(pluginDir, filename), data);
+    const platformKey = derivePlatformKey(filename);
+    if (platformKey) {
+      binariesMap[platformKey] = filename;
+    }
+  }
+
   await fs.writeFile(path.join(assetsDir, `${safeId}.html`), htmlEntry);
   await fs.writeFile(path.join(assetsDir, `${safeId}.css`), cssEntry);
   await fs.writeFile(path.join(assetsDir, `${safeId}.js`), jsEntry);
@@ -104,7 +117,7 @@ export async function ensurePluginExtracted(
     id: safeId,
     name: safeId,
     version: "1.0.0",
-    binary: `${safeId}.wasm`,
+    binaries: binariesMap,
     entry: `${safeId}.html`,
     assets: {
       html: `${safeId}.html`,
@@ -168,7 +181,9 @@ export async function loadPluginBundle(
   pluginRoot: string,
   pluginId: string,
   ensureExtracted: (pluginId: string) => Promise<void>,
-): Promise<{ manifest: PluginManifest; wasm: Uint8Array }> {
+  clientOS?: string,
+  clientArch?: string,
+): Promise<{ manifest: PluginManifest; binary: Uint8Array }> {
   await ensureExtracted(pluginId);
   const dir = path.join(pluginRoot, pluginId);
   const manifestPath = path.join(dir, "manifest.json");
@@ -177,30 +192,46 @@ export async function loadPluginBundle(
   manifest.id = manifest.id || pluginId;
   manifest.name = manifest.name || pluginId;
 
-  const binaryName = manifest.binary || manifest.entry || `${pluginId}.wasm`;
-  let wasmPath = path.join(dir, binaryName);
-  try {
-    await fs.access(wasmPath);
-  } catch {
-    const files = await fs.readdir(dir);
-    const firstWasm = files.find((f) => f.toLowerCase().endsWith(".wasm"));
-    if (!firstWasm) throw new Error("No .wasm found for plugin " + pluginId);
-    wasmPath = path.join(dir, firstWasm);
+  let binaryPath: string | null = null;
+
+  if (manifest.binaries && clientOS && clientArch) {
+    const key = `${clientOS}-${clientArch}`;
+    const filename = manifest.binaries[key];
+    if (filename) {
+      const candidate = path.join(dir, filename);
+      try {
+        await fs.access(candidate);
+        binaryPath = candidate;
+      } catch {}
+    }
   }
-  const wasm = new Uint8Array(await fs.readFile(wasmPath));
-  return { manifest, wasm };
+
+  if (!binaryPath) {
+    const files = await fs.readdir(dir);
+    const found = files.find(
+      (f) =>
+        f.toLowerCase().endsWith(".so") ||
+        f.toLowerCase().endsWith(".dll") ||
+        f.toLowerCase().endsWith(".dylib"),
+    );
+    if (!found) throw new Error(`No plugin binary found for ${pluginId} (${clientOS}-${clientArch})`);
+    binaryPath = path.join(dir, found);
+  }
+
+  const binary = new Uint8Array(await fs.readFile(binaryPath));
+  return { manifest, binary };
 }
 
 export function sendPluginBundle(
   target: ClientInfo,
-  bundle: { manifest: PluginManifest; wasm: Uint8Array },
+  bundle: { manifest: PluginManifest; binary: Uint8Array },
 ): void {
   const chunkSize = 16 * 1024;
-  const wasm = bundle.wasm;
-  const totalChunks = Math.ceil(wasm.length / chunkSize);
+  const data = bundle.binary;
+  const totalChunks = Math.ceil(data.length / chunkSize);
   const initPayload = {
     manifest: bundle.manifest,
-    size: wasm.length,
+    size: data.length,
     chunks: totalChunks,
   };
   target.ws.send(
@@ -214,8 +245,8 @@ export function sendPluginBundle(
 
   for (let i = 0; i < totalChunks; i++) {
     const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, wasm.length);
-    const chunk = wasm.slice(start, end);
+    const end = Math.min(start + chunkSize, data.length);
+    const chunk = data.slice(start, end);
     target.ws.send(
       encodeMessage({
         type: "command",
@@ -234,4 +265,16 @@ export function sendPluginBundle(
       payload: { pluginId: bundle.manifest.id },
     }),
   );
+}
+
+function derivePlatformKey(filename: string): string {
+  const match = filename.match(/-(linux|darwin|windows|freebsd)-(amd64|arm64|arm|386)\.(so|dll|dylib)$/i);
+  if (match) {
+    return `${match[1].toLowerCase()}-${match[2].toLowerCase()}`;
+  }
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".dll")) return "windows-amd64";
+  if (lower.endsWith(".dylib")) return "darwin-amd64";
+  if (lower.endsWith(".so")) return "linux-amd64";
+  return "";
 }

@@ -7,7 +7,6 @@ require (
 	github.com/gen2brain/x264-go v0.3.1 // optional: used when cgo is enabled
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/pixiv/go-libjpeg v0.0.0-20190822045933-3da21a74767d // optional: turbojpeg build tag
-	github.com/tetratelabs/wazero v1.7.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	nhooyr.io/websocket v1.8.10
 )

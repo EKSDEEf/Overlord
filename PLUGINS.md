@@ -1,8 +1,8 @@
 # Overlord Plugins
 
-This document explains how to build Overlord plugins, how the runtime works, and what you can do from a plugin UI and a WASM module.
+This document explains how to build Overlord plugins using the **native plugin system**. Plugins run as native shared libraries (`.so` on Linux, `.dylib` on macOS, in-memory DLL on Windows), giving them full access to the Go runtime and system APIs.
 
-> TL;DR: A plugin is a zip file with 4 files at the root: `<id>.wasm`, `<id>.html`, `<id>.css`, `<id>.js`. Upload it in the Plugins page or drop it in Overlord-Server/plugins.
+> TL;DR: A plugin is a zip with platform-specific binaries (`.so`/`.dll`/`.dylib`) plus `<id>.html`, `<id>.css`, `<id>.js`. Upload it in the Plugins page or drop it in Overlord-Server/plugins.
 
 ## 1) How plugins are structured
 
@@ -14,49 +14,54 @@ A plugin bundle is a zip file named after the plugin ID:
 <pluginId>.zip
 ```
 
-Inside the zip (root level), these four files are required:
+Inside the zip (root level), you need:
 
-```
-<pluginId>.wasm
-<pluginId>.html
-<pluginId>.css
-<pluginId>.js
-```
+- **Platform-specific binaries** named `<pluginId>-<os>-<arch>.<ext>`
+- **Web assets**: `<pluginId>.html`, `<pluginId>.css`, `<pluginId>.js`
 
 Example for plugin ID `sample`:
 
 ```
 sample.zip
-  ├─ sample.wasm
+  ├─ sample-linux-amd64.so
+  ├─ sample-linux-arm64.so
+  ├─ sample-darwin-arm64.dylib
+  ├─ sample-windows-amd64.dll
   ├─ sample.html
   ├─ sample.css
   └─ sample.js
 ```
 
-When the server sees `<pluginId>.zip`, it extracts to:
+When the server extracts the zip:
 
 ```
-Overlord-Server/plugins/<pluginId>/
-  ├─ <pluginId>.wasm
-  ├─ manifest.json
+Overlord-Server/plugins/sample/
+  ├─ sample-linux-amd64.so
+  ├─ sample-linux-arm64.so
+  ├─ sample-darwin-arm64.dylib
+  ├─ sample-windows-amd64.dll
+  ├─ manifest.json          (auto-generated)
   └─ assets/
-     ├─ <pluginId>.html
-     ├─ <pluginId>.css
-     └─ <pluginId>.js
+     ├─ sample.html
+     ├─ sample.css
+     └─ sample.js
 ```
-
-The server **generates manifest.json** automatically. You do not need to include a manifest inside the zip.
 
 ### Manifest fields
 
-The auto-generated manifest looks like:
+The auto-generated manifest:
 
-```
+```json
 {
   "id": "sample",
   "name": "sample",
   "version": "1.0.0",
-  "binary": "sample.wasm",
+  "binaries": {
+    "linux-amd64": "sample-linux-amd64.so",
+    "linux-arm64": "sample-linux-arm64.so",
+    "darwin-arm64": "sample-darwin-arm64.dylib",
+    "windows-amd64": "sample-windows-amd64.dll"
+  },
   "entry": "sample.html",
   "assets": {
     "html": "sample.html",
@@ -66,47 +71,126 @@ The auto-generated manifest looks like:
 }
 ```
 
-## 2) Build a WASM plugin (Go WASI)
+The server picks the right binary for the target client's OS/arch when loading.
 
-The plugin runtime expects a WASI-compatible WebAssembly binary. Go 1.21+ builds work well with the current wazero runtime.
+## 2) Build a native plugin
 
-Build steps (from the plugin folder):
+### Plugin contract
+
+Plugins are Go packages that export specific functions. The core logic is shared across platforms, with thin platform-specific export wrappers.
+
+All platforms use `-buildmode=c-shared` and export C-callable functions.
+
+#### Linux / macOS (`.so` / `.dylib`)
+
+```go
+//export PluginOnLoad
+func PluginOnLoad(hostInfo *C.char, hostInfoLen C.int, cb C.uintptr_t, ctx C.uintptr_t) C.int
+
+//export PluginOnEvent
+func PluginOnEvent(event *C.char, eventLen C.int, payload *C.char, payloadLen C.int) C.int
+
+//export PluginOnUnload
+func PluginOnUnload()
+```
+
+The host passes a callback function pointer and context during OnLoad. The plugin calls the callback to send events back.
+
+Build: `CGO_ENABLED=1 go build -buildmode=c-shared -o sample-linux-amd64.so ./native`
+
+**On Linux, shared libraries are loaded entirely in memory via `memfd_create` — no files touch disk.**
+
+#### Windows (`.dll`)
+
+```go
+//export PluginOnLoad
+func PluginOnLoad(hostInfo *C.char, hostInfoLen C.int, callbackPtr C.ulonglong) C.int
+
+//export PluginOnEvent
+func PluginOnEvent(event *C.char, eventLen C.int, payload *C.char, payloadLen C.int) C.int
+
+//export PluginOnUnload
+func PluginOnUnload()
+
+//export PluginSetCallback
+func PluginSetCallback(callbackPtr C.ulonglong)
+```
+
+The callback is a stdcall function pointer: `func(eventPtr, eventLen, payloadPtr, payloadLen uintptr) uintptr`
+
+Build: `CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build -buildmode=c-shared -o sample-windows-amd64.dll ./native`
+
+**On Windows, DLLs are loaded entirely in memory — no files are written to disk.**
+
+### HostInfo JSON
+
+```json
+{
+  "clientId": "abc123",
+  "os": "windows",
+  "arch": "amd64",
+  "version": "1.0.0"
+}
+```
+
+### Project structure
+
+See `plugin-sample-go/native/` for a working example:
 
 ```
-GOOS=wasip1 GOARCH=wasm go build -o <pluginId>.wasm ./wasm
+plugin-sample-go/native/
+  ├─ main.go              (shared core logic)
+  ├─ exports_unix.go      (Go plugin exports for Linux/macOS)
+  ├─ exports_windows.go   (C-shared DLL exports for Windows)
+  └─ go.mod
 ```
 
-There is a working example in:
+### Build scripts
 
-- plugin-sample-go/wasm/main.go
+Use the provided build scripts:
+
+```bash
+# Linux/macOS — builds for current platform by default
+./build-plugin.sh
+
+# Build for multiple targets
+BUILD_TARGETS="linux-amd64 linux-arm64 darwin-arm64" ./build-plugin.sh
+
+# Windows — builds windows-amd64 by default
+build-plugin.bat
+
+# Build for multiple targets
+set BUILD_TARGETS=windows-amd64 linux-amd64
+build-plugin.bat
+```
 
 ## 3) Install & open a plugin
 
 ### Install / upload
 
-- Use the UI at /plugins to upload the zip
-- Or drop `<pluginId>.zip` into Overlord-Server/plugins and restart the server
+- Use the UI at `/plugins` to upload the zip
+- Or drop `<pluginId>.zip` into `Overlord-Server/plugins` and restart
 
 ### Open the UI
 
-The plugin UI is served from:
+Plugin UI is served from:
 
 ```
 /plugins/<pluginId>?clientId=<CLIENT_ID>
 ```
 
-Your HTML should load its JS/CSS from `/plugins/<pluginId>/assets/`.
+Your HTML loads its JS/CSS from `/plugins/<pluginId>/assets/`.
 
 ## 4) Runtime: how events flow
 
 Overlord plugins have **two parts**:
 
-1. **UI (HTML/CSS/JS)** — Runs in the browser and can call server APIs or open WebSockets.
-2. **WASM module** — Runs in the agent (client) process via wazero.
+1. **UI (HTML/CSS/JS)** — Runs in the browser, calls server APIs.
+2. **Native module** — Runs in the agent (client) process as a loaded shared library.
 
 ### UI → agent (plugin event)
 
-From your UI JS, you can send an event to a plugin on a client:
+From your UI JS:
 
 ```
 POST /api/clients/<clientId>/plugins/<pluginId>/event
@@ -116,94 +200,53 @@ POST /api/clients/<clientId>/plugins/<pluginId>/event
 }
 ```
 
-If the plugin is not loaded yet, the server will:
+If the plugin is not loaded yet, the server will load it on the client, queue the event, and deliver it once ready.
 
-- load it on the client
-- queue your event
-- deliver it when the plugin reports `loaded`
+### Agent → plugin (direct function call)
 
-### Agent → plugin (WASM stdin)
+The agent calls your `OnEvent(event, payload)` function directly with JSON-encoded data. No stdin/stdout pipes, no msgpack — just a direct function call.
 
-The agent forwards that event into the WASM plugin over msgpack via stdin.
+### Plugin → agent (callback)
 
-The message envelope looks like:
+Your plugin sends events back to the host using the `send` callback received during `OnLoad`:
 
-```
-{
-  "type": "event",
-  "event": "ui_message",
-  "payload": { ... }
-}
+```go
+send("echo", []byte(`{"message":"hello back"}`))
 ```
 
-### Plugin → agent (WASM stdout)
-
-Your WASM can reply by writing msgpack messages to stdout. Two supported types:
-
-- `type: "event"` → forwarded back to the server as `plugin_event`
-- `type: "log"` → logged by the agent
-
-Examples:
-
-```
-{ "type": "event", "event": "ready", "payload": "plugin ready" }
-{ "type": "log", "payload": "starting capture" }
-```
+On Windows, the equivalent is calling the registered callback function pointer.
 
 ### Plugin lifecycle events
 
-The agent sends lifecycle events to the server:
+The agent sends these events to the server:
 
 - `loaded` on successful load
 - `unloaded` when unloaded
 - `error` if load or runtime fails
 
-These update the server-side plugin status and error display.
-
-> Note: plugin events are **not** pushed back to the plugin UI automatically. If you need UI feedback, call a server API that returns a response to the UI or implement your own polling/WS endpoint.
-
 ## 5) What can plugins do?
 
-Plugins can do anything **the server already exposes** to authenticated users, such as:
+Since plugins run as native code, they can:
 
-- start/stop remote desktop
-- open a console session
-- file browser actions (list, upload, download, edit)
-- process listing and kill
-- run scripts
-- send commands to clients
+- Call any system API (file I/O, network, processes, etc.)
+- Use any Go library
+- Spawn goroutines
+- Access hardware
+- Do anything a normal Go program can do
 
-This is intentional: plugins **do not modify server code** and are sandboxed by the plugin CSP.
+Plugins have the same capabilities as the agent itself.
 
-### Security constraints
+### UI Security constraints
 
-Plugin pages are served with a tight CSP:
+Plugin UI pages are still served with a tight CSP:
 
-- scripts must be same-origin
-- no third‑party JS/CDN
+- Scripts must be same-origin
+- No third-party JS/CDN
 - WebSocket and fetch are allowed to same origin
 
-That means your plugin JS must be bundled into `<pluginId>.js` and loaded from `/plugins/<pluginId>/assets/`.
+Plugin UIs run in a **sandboxed iframe** with a fetch bridge.
 
-### Sandboxed iframe isolation
-
-Plugin UIs are rendered inside a **sandboxed iframe** to isolate them from the main dashboard. This provides:
-
-- No access to main app DOM
-- No access to main app cookies/localStorage
-- No direct access to privileged APIs
-
-Because of the sandbox, **direct network calls from the plugin are blocked** by CSP. The system injects a small bridge that replaces `window.fetch` and forwards requests to the parent page.
-
-Practical implications:
-
-- Use `fetch()` as usual in your plugin JS
-- Only the allowed plugin API routes are permitted
-- Direct WebSocket usage from the plugin frame is blocked
-
-If your plugin needs WebSockets (e.g., remote desktop), you must build a parent‑page bridge that opens the WS in the parent and forwards frames into the plugin UI. See the remote desktop section below for the architecture.
-
-## 6) API surface (what you can call)
+## 6) API surface
 
 ### Plugin management
 
@@ -220,78 +263,10 @@ If your plugin needs WebSockets (e.g., remote desktop), you must build a parent�
 
 ### Useful built-in endpoints
 
-- `POST /api/clients/<clientId>/command` (input, ping, scripts, etc.)
+- `POST /api/clients/<clientId>/command`
 - `WS /api/clients/<clientId>/rd/ws` (remote desktop)
 - `WS /api/clients/<clientId>/console/ws`
 - `WS /api/clients/<clientId>/files/ws`
 - `WS /api/clients/<clientId>/processes/ws`
 
-## 7) Building a “pinnacle” plugin (remote desktop class)
 
-A remote‑desktop‑class plugin typically has:
-
-1. **A UI page** with a `<canvas>` and quality controls
-2. **A WebSocket** connection to `/api/clients/<id>/rd/ws`
-3. **Command messages** (`desktop_start`, `desktop_stop`, `desktop_select_display`, etc.)
-4. **Binary frame decoding** (JPEG/raw) and drawing into the canvas
-
-### How it would work (high level)
-
-1. UI page reads `clientId` from query string
-2. JS opens a WebSocket to `/api/clients/<clientId>/rd/ws`
-3. UI sends JSON messages:
-
-```
-{ "type": "desktop_start" }
-{ "type": "desktop_select_display", "display": 0 }
-{ "type": "desktop_set_quality", "quality": 90, "codec": "jpeg" }
-```
-
-4. Incoming WS messages contain encoded frames (see `public/assets/remotedesktop.js` for the parsing logic)
-5. Draw frames into the canvas and expose controls to the user
-
-You do **not** need to re-implement the agent capture pipeline. The agent already supports it; your plugin just drives the existing WS endpoint.
-
-### What you’d write (outline)
-
-- **HTML**: Canvas + controls
-- **JS**:
-  - parse `clientId`
-  - open WS
-  - send desktop commands
-  - decode frames and draw
-- **WASM module** (optional):
-  - background tasks or message validation
-  - optional telemetry / state management
-
-If you want a starting point, the existing remote desktop UI is in:
-
-- Overlord-Server/public/remotedesktop.html
-- Overlord-Server/public/assets/remotedesktop.js
-
-You can reuse that logic inside your plugin UI with minimal changes.
-
-## 8) Example: minimal plugin code shape
-
-### WASM side (Go, message loop)
-
-- listen on stdin using msgpack
-- on `type=init`, send `event=ready`
-- on `type=event`, process payload and emit response events
-
-See:
-
-- plugin-sample-go/wasm/main.go
-
-### UI side (JS)
-
-- call `/api/clients/<id>/plugins/<pluginId>/event`
-- show responses via your own UI (or poll your own endpoints)
-
-See:
-
-- plugin-sample-go/sample.js
-
----
-
-If you want a deeper walkthrough of a specific plugin type (file explorer, custom telemetry, or a remote-desktop clone), say which one and I’ll expand that section.

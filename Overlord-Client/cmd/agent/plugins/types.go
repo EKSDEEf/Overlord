@@ -9,13 +9,14 @@ type PluginAssets struct {
 }
 
 type PluginManifest struct {
-	ID          string       `msgpack:"id" json:"id"`
-	Name        string       `msgpack:"name" json:"name"`
-	Version     string       `msgpack:"version,omitempty" json:"version,omitempty"`
-	Description string       `msgpack:"description,omitempty" json:"description,omitempty"`
-	Binary      string       `msgpack:"binary,omitempty" json:"binary,omitempty"`
-	Entry       string       `msgpack:"entry,omitempty" json:"entry,omitempty"`
-	Assets      PluginAssets `msgpack:"assets,omitempty" json:"assets,omitempty"`
+	ID          string            `msgpack:"id" json:"id"`
+	Name        string            `msgpack:"name" json:"name"`
+	Version     string            `msgpack:"version,omitempty" json:"version,omitempty"`
+	Description string            `msgpack:"description,omitempty" json:"description,omitempty"`
+	Binary      string            `msgpack:"binary,omitempty" json:"binary,omitempty"`
+	Binaries    map[string]string `msgpack:"binaries,omitempty" json:"binaries,omitempty"`
+	Entry       string            `msgpack:"entry,omitempty" json:"entry,omitempty"`
+	Assets      PluginAssets      `msgpack:"assets,omitempty" json:"assets,omitempty"`
 }
 
 type PluginMessage struct {
@@ -26,10 +27,20 @@ type PluginMessage struct {
 }
 
 type HostInfo struct {
-	ClientID string `msgpack:"clientId"`
-	OS       string `msgpack:"os"`
-	Arch     string `msgpack:"arch"`
-	Version  string `msgpack:"version"`
+	ClientID string `msgpack:"clientId" json:"clientId"`
+	OS       string `msgpack:"os" json:"os"`
+	Arch     string `msgpack:"arch" json:"arch"`
+	Version  string `msgpack:"version" json:"version"`
+}
+
+type NativePlugin interface {
+	Load(send func(event string, payload []byte), hostInfo []byte) error
+
+	Event(event string, payload []byte) error
+
+	Unload()
+
+	Close() error
 }
 
 func ManifestFromMap(m map[string]interface{}) (PluginManifest, error) {
@@ -40,6 +51,15 @@ func ManifestFromMap(m map[string]interface{}) (PluginManifest, error) {
 	manifest.Description = stringVal(m["description"])
 	manifest.Binary = stringVal(m["binary"])
 	manifest.Entry = stringVal(m["entry"])
+
+	if binariesRaw, ok := m["binaries"].(map[string]interface{}); ok {
+		manifest.Binaries = make(map[string]string, len(binariesRaw))
+		for k, v := range binariesRaw {
+			if s, ok := v.(string); ok {
+				manifest.Binaries[k] = s
+			}
+		}
+	}
 
 	if assetsRaw, ok := m["assets"].(map[string]interface{}); ok {
 		manifest.Assets = PluginAssets{

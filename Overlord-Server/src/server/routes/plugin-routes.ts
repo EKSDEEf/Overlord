@@ -14,7 +14,7 @@ type PluginManifest = {
 
 type PluginBundle = {
   manifest: PluginManifest;
-  wasm: Uint8Array;
+  binary: Uint8Array;
 };
 
 type PluginState = {
@@ -32,7 +32,7 @@ type PluginRouteDeps = {
   ensurePluginExtracted: (pluginId: string) => Promise<void>;
   savePluginState: () => Promise<void>;
   listPluginManifests: () => Promise<PluginManifest[]>;
-  loadPluginBundle: (pluginId: string) => Promise<PluginBundle>;
+  loadPluginBundle: (pluginId: string, clientOS?: string, clientArch?: string) => Promise<PluginBundle>;
   sendPluginBundle: (target: any, bundle: PluginBundle) => void;
   markPluginLoading: (clientId: string, pluginId: string) => void;
   isPluginLoaded: (clientId: string, pluginId: string) => boolean;
@@ -231,7 +231,7 @@ export async function handlePluginRoutes(
       return Response.json({ ok: true, loading: true });
     }
     try {
-      const bundle = await deps.loadPluginBundle(pluginId);
+      const bundle = await deps.loadPluginBundle(pluginId, target.os, target.arch);
       deps.markPluginLoading(targetId, pluginId);
       deps.sendPluginBundle(target, bundle);
       metrics.recordCommand("plugin_load");
@@ -276,7 +276,7 @@ export async function handlePluginRoutes(
       deps.enqueuePluginEvent(targetId, pluginId, event, payload);
       if (!deps.isPluginLoading(targetId, pluginId)) {
         try {
-          const bundle = await deps.loadPluginBundle(pluginId);
+          const bundle = await deps.loadPluginBundle(pluginId, target.os, target.arch);
           deps.markPluginLoading(targetId, pluginId);
           deps.sendPluginBundle(target, bundle);
           metrics.recordCommand("plugin_load");
