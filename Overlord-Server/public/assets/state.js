@@ -9,5 +9,6 @@ export const state = {
   lastDigest: "",
   isLoading: false,
   pendingForce: false,
+  pendingReorder: false,
   thumbnailsRequested: false,
 };

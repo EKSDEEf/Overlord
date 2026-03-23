@@ -18,6 +18,7 @@ export async function loadWithOptions(options = {}) {
   const { force = false, reorder = false } = options;
   if (state.isLoading) {
     state.pendingForce = state.pendingForce || force;
+    state.pendingReorder = state.pendingReorder || reorder;
     return;
   }
   state.isLoading = true;
@@ -52,10 +53,12 @@ export async function loadWithOptions(options = {}) {
     console.error("load clients", err);
   } finally {
     state.isLoading = false;
-    if (state.pendingForce) {
+    if (state.pendingForce || state.pendingReorder) {
       const shouldForce = state.pendingForce;
+      const shouldReorder = state.pendingReorder;
       state.pendingForce = false;
-      loadWithOptions({ force: shouldForce });
+      state.pendingReorder = false;
+      loadWithOptions({ force: shouldForce, reorder: shouldReorder });
     }
   }
 }
@@ -125,7 +128,7 @@ function connectDashboardWs() {
     try {
       const msg = typeof event.data === "string" ? JSON.parse(event.data) : null;
       if (msg && msg.type === "clients_changed") {
-        loadWithOptions({ force: false });
+        loadWithOptions({ force: false, reorder: true });
       }
     } catch {}
   };
@@ -157,7 +160,7 @@ function adjustPollingForWs() {
     ? FALLBACK_POLL_MS
     : getConfiguredPollIntervalMs(POLL_INTERVAL_MS);
   pollTimer = setInterval(() => {
-    loadWithOptions({ force: false });
+    loadWithOptions({ force: false, reorder: true });
   }, interval);
 }
 
@@ -168,7 +171,7 @@ export function startAutoRefresh(intervalMs = POLL_INTERVAL_MS) {
     : getConfiguredPollIntervalMs(intervalMs);
   clearInterval(pollTimer);
   pollTimer = setInterval(() => {
-    loadWithOptions({ force: false });
+    loadWithOptions({ force: false, reorder: true });
   }, effectiveInterval);
 }
 
